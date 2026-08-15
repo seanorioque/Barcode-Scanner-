@@ -8,6 +8,10 @@ import 'package:flutter_test/flutter_test.dart';
 import '../fakes/fake_scan_repository.dart';
 
 void main() {
+  // Once the search field is present, `find.byType(TextField)` matches it
+  // too, so dialog-scoped lookups need to be narrowed to the dialog itself.
+  final dialogTextField = find.descendant(of: find.byType(AlertDialog), matching: find.byType(TextField));
+
   Future<FakeScanRepository> pumpEntries(WidgetTester tester, {List<ScanEntry> seed = const []}) async {
     final repository = FakeScanRepository();
     for (final entry in seed) {
@@ -27,14 +31,14 @@ void main() {
     await pumpEntries(tester);
 
     expect(find.text('No scans yet'), findsOneWidget);
-    expect(find.text('Scan your first code'), findsOneWidget);
+    expect(find.text('Scan your first barcode'), findsOneWidget);
   });
 
   testWidgets('lists entries most-recent-first with value and format', (tester) async {
     await pumpEntries(
       tester,
       seed: [
-        ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1)),
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1)),
         ScanEntry(id: '2', value: 'BBB222', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 5)),
       ],
     );
@@ -49,17 +53,24 @@ void main() {
     expect(mostRecentTop, lessThan(olderTop));
   });
 
-  testWidgets('swiping an entry deletes it and Undo restores it', (tester) async {
+  testWidgets('swiping an entry asks for confirmation before deleting it, and Undo restores it', (tester) async {
     final repository = await pumpEntries(
       tester,
-      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1))],
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
     );
 
     await tester.drag(find.text('AAA111'), const Offset(-500, 0));
+    await tester.pump();
+
+    expect(find.text('Delete this scan?'), findsOneWidget);
+    expect(find.text('AAA111'), findsWidgets); // still present, not yet deleted
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
 
     expect(find.text('AAA111'), findsNothing);
     expect(repository.entries, isEmpty);
+    expect(repository.deletedEntries, hasLength(1));
     expect(find.text('Undo'), findsOneWidget);
 
     await tester.tap(find.text('Undo'));
@@ -67,13 +78,64 @@ void main() {
 
     expect(find.text('AAA111'), findsOneWidget);
     expect(repository.entries, hasLength(1));
+    expect(repository.deletedEntries, isEmpty);
+  });
+
+  testWidgets('Cancel in the delete confirmation keeps the entry', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.drag(find.text('AAA111'), const Offset(-500, 0));
+    await tester.pump();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AAA111'), findsOneWidget);
+    expect(repository.entries, hasLength(1));
+  });
+
+  testWidgets('search filters by value and label', (tester) async {
+    await pumpEntries(
+      tester,
+      seed: [
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+        ScanEntry(id: '2', value: 'BBB222', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 5)),
+      ],
+    );
+
+    await tester.enterText(find.byKey(const ValueKey('entries_search')), 'BBB');
+    await tester.pump();
+
+    expect(find.text('AAA111'), findsNothing);
+    expect(find.text('BBB222'), findsOneWidget);
+
+    await tester.enterText(find.byKey(const ValueKey('entries_search')), 'Pantry');
+    await tester.pump();
+
+    expect(find.text('AAA111'), findsOneWidget);
+    expect(find.text('BBB222'), findsNothing);
+  });
+
+  testWidgets('search with no matches shows a message instead of the list', (tester) async {
+    await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.enterText(find.byKey(const ValueKey('entries_search')), 'nope');
+    await tester.pump();
+
+    expect(find.text('AAA111'), findsNothing);
+    expect(find.textContaining('No matches for'), findsOneWidget);
   });
 
   testWidgets('tapping a timestamp reveals the absolute date, tapping again reverts', (tester) async {
     final scannedAt = DateTime.now().toUtc().subtract(const Duration(hours: 3));
     await pumpEntries(
       tester,
-      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', scannedAt: scannedAt)],
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: scannedAt)],
     );
 
     expect(find.text('3h ago'), findsOneWidget);
@@ -93,7 +155,7 @@ void main() {
   testWidgets('tapping the label opens an editable dialog and saves the new label', (tester) async {
     final repository = await pumpEntries(
       tester,
-      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1))],
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
     );
 
     expect(find.text('Add label'), findsOneWidget);
@@ -102,7 +164,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Edit label'), findsOneWidget);
-    await tester.enterText(find.byType(TextField), 'Pantry');
+    await tester.enterText(dialogTextField, 'Pantry');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
@@ -114,7 +176,7 @@ void main() {
     final repository = await pumpEntries(
       tester,
       seed: [
-        ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
       ],
     );
 
@@ -122,7 +184,7 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('label_1')));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '');
+    await tester.enterText(dialogTextField, '');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
@@ -134,13 +196,13 @@ void main() {
     final repository = await pumpEntries(
       tester,
       seed: [
-        ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
       ],
     );
 
     await tester.tap(find.byKey(const ValueKey('label_1')));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), 'Ignored');
+    await tester.enterText(dialogTextField, 'Ignored');
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
