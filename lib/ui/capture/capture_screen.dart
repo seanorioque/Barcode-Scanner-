@@ -58,6 +58,17 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> with WidgetsBindi
     if (!mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PreviewScreen()));
     _navigatingToPreview = false;
+    if (!mounted) return;
+
+    // Rescan/Save/Done on Preview already leave the scanner in the right
+    // state (or navigate past this screen entirely, unmounting it before
+    // this line ever runs). A system/gesture back from Preview does
+    // neither — it just pops back here with the camera still stopped from
+    // capture/detection — so pick scanning back up in that case.
+    final phase = ref.read(scannerControllerProvider).phase;
+    if (phase != ScanPhase.scanning) {
+      unawaited(ref.read(scannerControllerProvider.notifier).start());
+    }
   }
 
   @override
