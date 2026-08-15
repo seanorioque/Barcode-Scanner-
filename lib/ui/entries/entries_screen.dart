@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -83,6 +85,13 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
                 ),
                 onDismissed: (_) => _deleteWithUndo(entry),
                 child: ListTile(
+                  leading: switch (entry.imagePath) {
+                    final path? => ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: Image.file(File(path), width: 48, height: 48, fit: BoxFit.cover),
+                    ),
+                    null => null,
+                  },
                   title: Text(
                     entry.value,
                     maxLines: 1,
@@ -191,7 +200,7 @@ class _EmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Captured barcodes and QR codes will show up here.',
+              'Captured barcodes will show up here.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium,
             ),

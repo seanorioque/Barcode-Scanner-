@@ -1,4 +1,4 @@
-/// A single barcode/QR code found in one analyzed camera frame.
+/// A single 1D barcode found in one analyzed camera frame.
 class BarcodeDetection {
   const BarcodeDetection({
     required this.value,
@@ -48,4 +48,9 @@ abstract class BarcodeScannerService {
   Future<void> dispose();
 
   Future<void> setTorchEnabled(bool enabled);
+
+  /// Captures a photo of the current camera frame and saves it to
+  /// persistent storage, returning its file path. Returns `null` if a
+  /// photo can't be captured.
+  Future<String?> captureImage();
 }

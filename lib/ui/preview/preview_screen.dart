@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -60,6 +61,14 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (state.imagePath case final imagePath?)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.file(File(imagePath), height: 180, width: double.infinity, fit: BoxFit.cover),
+                  ),
+                ),
               Chip(label: Text(detection.format)),
               const SizedBox(height: 12),
               SelectableText(detection.value, style: const TextStyle(fontFamily: 'monospace', fontSize: 18)),

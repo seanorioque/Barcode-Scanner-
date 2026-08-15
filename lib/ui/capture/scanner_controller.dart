@@ -20,6 +20,7 @@ class ScannerState {
     this.unavailableReason,
     this.duplicateOf,
     this.torchOn = false,
+    this.imagePath,
   });
 
   final ScanPhase phase;
@@ -30,6 +31,9 @@ class ScannerState {
   final ScanEntry? duplicateOf;
   final bool torchOn;
 
+  /// Path to the photo captured at detection time, once capture finishes.
+  final String? imagePath;
+
   ScannerState copyWith({
     ScanPhase? phase,
     BarcodeDetection? detection,
@@ -39,6 +43,8 @@ class ScannerState {
     ScanEntry? duplicateOf,
     bool clearDuplicateOf = false,
     bool? torchOn,
+    String? imagePath,
+    bool clearImagePath = false,
   }) {
     return ScannerState(
       phase: phase ?? this.phase,
@@ -46,6 +52,7 @@ class ScannerState {
       unavailableReason: clearUnavailableReason ? null : (unavailableReason ?? this.unavailableReason),
       duplicateOf: clearDuplicateOf ? null : (duplicateOf ?? this.duplicateOf),
       torchOn: torchOn ?? this.torchOn,
+      imagePath: clearImagePath ? null : (imagePath ?? this.imagePath),
     );
   }
 }
@@ -67,7 +74,12 @@ class ScannerController extends Notifier<ScannerState> {
   }
 
   Future<void> start() async {
-    state = state.copyWith(phase: ScanPhase.scanning, clearDetection: true, clearUnavailableReason: true);
+    state = state.copyWith(
+      phase: ScanPhase.scanning,
+      clearDetection: true,
+      clearUnavailableReason: true,
+      clearImagePath: true,
+    );
     final result = await _service.start();
     if (!result.isReady) {
       state = state.copyWith(phase: ScanPhase.unavailable, unavailableReason: result.reason);
@@ -75,6 +87,11 @@ class ScannerController extends Notifier<ScannerState> {
     }
     await _sub?.cancel();
     _sub = _service.detections.listen(_onDetections);
+    // _CameraPreviewOrPlaceholder reads the camera controller straight off
+    // the service rather than listening for it, so it only ever notices a
+    // freshly-initialized controller on the next rebuild. Nothing else
+    // triggers one between here and the first detection, so force it.
+    state = state.copyWith(phase: ScanPhase.scanning);
   }
 
   void _onDetections(List<BarcodeDetection> frame) {
@@ -83,7 +100,7 @@ class ScannerController extends Notifier<ScannerState> {
     if (selected == null) return;
 
     state = state.copyWith(phase: ScanPhase.detected, detection: selected);
-    unawaited(_service.stop());
+    unawaited(_captureImageThenStop(selected));
     unawaited(
       _repository.findMostRecentByValue(selected.value).then((duplicate) {
         if (state.detection?.value != selected.value) return;
@@ -94,12 +111,23 @@ class ScannerController extends Notifier<ScannerState> {
     );
   }
 
+  /// Takes the detection photo before releasing the camera — capture needs
+  /// the controller alive, and `stop()` fully disposes it.
+  Future<void> _captureImageThenStop(BarcodeDetection detection) async {
+    final imagePath = await _service.captureImage();
+    if (state.detection?.value == detection.value && imagePath != null) {
+      state = state.copyWith(imagePath: imagePath);
+    }
+    await _service.stop();
+  }
+
   Future<void> rescan() async {
     state = state.copyWith(
       phase: ScanPhase.scanning,
       clearDetection: true,
       clearDuplicateOf: true,
       clearUnavailableReason: true,
+      clearImagePath: true,
     );
     final result = await _service.start();
     if (!result.isReady) {
@@ -108,6 +136,7 @@ class ScannerController extends Notifier<ScannerState> {
     }
     await _sub?.cancel();
     _sub = _service.detections.listen(_onDetections);
+    state = state.copyWith(phase: ScanPhase.scanning);
   }
 
   Future<void> save({String? label}) async {
@@ -122,11 +151,17 @@ class ScannerController extends Notifier<ScannerState> {
       format: detection.format,
       label: (trimmedLabel == null || trimmedLabel.isEmpty) ? null : trimmedLabel,
       scannedAt: DateTime.now().toUtc(),
+      imagePath: state.imagePath,
     );
     await _repository.save(entry);
     await _sub?.cancel();
     await _service.stop();
-    state = state.copyWith(phase: ScanPhase.idle, clearDetection: true, clearDuplicateOf: true);
+    state = state.copyWith(
+      phase: ScanPhase.idle,
+      clearDetection: true,
+      clearDuplicateOf: true,
+      clearImagePath: true,
+    );
   }
 
   /// Releases the camera while the app is backgrounded, without disturbing

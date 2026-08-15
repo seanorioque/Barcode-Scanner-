@@ -5,12 +5,14 @@ import 'dart:ui' show Size;
 
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../domain/barcode_scanner_service.dart';
 
-/// Formats the detector accepts. Narrowing the list (rather than "all
-/// formats") measurably improves latency and reduces misreads.
+/// Formats the detector accepts. 1D only — narrowing the list (rather than
+/// "all formats") also measurably improves latency and reduces misreads.
 const _supportedFormats = [
   BarcodeFormat.ean13,
   BarcodeFormat.ean8,
@@ -18,8 +20,9 @@ const _supportedFormats = [
   BarcodeFormat.upce,
   BarcodeFormat.code128,
   BarcodeFormat.code39,
+  BarcodeFormat.code93,
+  BarcodeFormat.codabar,
   BarcodeFormat.itf,
-  BarcodeFormat.qrCode,
 ];
 
 /// [BarcodeScannerService] backed by `camera` + Google ML Kit. Owns the
@@ -190,5 +193,28 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
     final controller = _controller;
     if (controller == null) return;
     await controller.setFlashMode(enabled ? FlashMode.torch : FlashMode.off);
+  }
+
+  /// Stops frame analysis (a capture request can't share the camera with an
+  /// active image stream) and takes a full-resolution photo, copying it out
+  /// of the plugin's temp file into a durable app-storage location.
+  @override
+  Future<String?> captureImage() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return null;
+    try {
+      if (controller.value.isStreamingImages) {
+        await controller.stopImageStream();
+      }
+      final picture = await controller.takePicture();
+      final documentsDir = await getApplicationDocumentsDirectory();
+      final imagesDir = Directory(p.join(documentsDir.path, 'scan_images'));
+      await imagesDir.create(recursive: true);
+      final destination = p.join(imagesDir.path, '${DateTime.now().microsecondsSinceEpoch}.jpg');
+      await File(picture.path).copy(destination);
+      return destination;
+    } on CameraException {
+      return null;
+    }
   }
 }

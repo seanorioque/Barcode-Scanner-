@@ -25,16 +25,22 @@ class SqliteScanRepository implements ScanRepository {
     final db = await _databaseFactory.openDatabase(
       _path,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: (db, version) => db.execute('''
           CREATE TABLE $_tableName (
             id          TEXT PRIMARY KEY,
             value       TEXT    NOT NULL,
             format      TEXT    NOT NULL,
             label       TEXT,
-            scanned_at  INTEGER NOT NULL
+            scanned_at  INTEGER NOT NULL,
+            image_path  TEXT
           )
         '''),
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await db.execute('ALTER TABLE $_tableName ADD COLUMN image_path TEXT');
+          }
+        },
       ),
     );
     await db.execute(
@@ -97,6 +103,7 @@ class SqliteScanRepository implements ScanRepository {
     'format': entry.format,
     'label': entry.label,
     'scanned_at': entry.scannedAt.toUtc().millisecondsSinceEpoch,
+    'image_path': entry.imagePath,
   };
 
   ScanEntry _entryFromRow(Map<String, Object?> row) => ScanEntry(
@@ -105,5 +112,6 @@ class SqliteScanRepository implements ScanRepository {
     format: row['format'] as String,
     label: row['label'] as String?,
     scannedAt: DateTime.fromMillisecondsSinceEpoch(row['scanned_at'] as int, isUtc: true),
+    imagePath: row['image_path'] as String?,
   );
 }

@@ -26,7 +26,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen> with WidgetsBindi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(ref.read(scannerControllerProvider.notifier).start());
+    unawaited(Future.microtask(() => ref.read(scannerControllerProvider.notifier).start()));
   }
 
   @override

@@ -13,6 +13,8 @@ class FakeBarcodeScannerService implements BarcodeScannerService {
   int stopCallCount = 0;
   int disposeCallCount = 0;
   bool torchOn = false;
+  String? imageToCapture;
+  int captureImageCallCount = 0;
 
   @override
   Stream<List<BarcodeDetection>> get detections => _controller.stream;
@@ -40,5 +42,11 @@ class FakeBarcodeScannerService implements BarcodeScannerService {
   @override
   Future<void> setTorchEnabled(bool enabled) async {
     torchOn = enabled;
+  }
+
+  @override
+  Future<String?> captureImage() async {
+    captureImageCallCount++;
+    return imageToCapture;
   }
 }
