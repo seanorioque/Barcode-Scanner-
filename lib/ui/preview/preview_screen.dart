@@ -18,9 +18,25 @@ class PreviewScreen extends ConsumerStatefulWidget {
 
 class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   final _labelController = TextEditingController();
+  late final ProviderSubscription<ScannerState> _saveErrorSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // listenManual (not listen) because this runs from initState, not
+    // build -- registered once per screen instance rather than re-added on
+    // every rebuild.
+    _saveErrorSubscription = ref.listenManual<ScannerState>(scannerControllerProvider, (previous, next) {
+      if (next.saveError != null && previous?.saveError != next.saveError) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(next.saveError!)));
+        ref.read(scannerControllerProvider.notifier).dismissSaveError();
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _saveErrorSubscription.close();
     _labelController.dispose();
     super.dispose();
   }

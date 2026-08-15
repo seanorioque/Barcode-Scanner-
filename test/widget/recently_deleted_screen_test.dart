@@ -37,7 +37,10 @@ void main() {
     );
 
     expect(find.text('AAA111'), findsOneWidget);
-    expect(find.textContaining('Deleted'), findsOneWidget);
+    // Trailing space so this doesn't also match the "Recently Deleted"
+    // AppBar title -- the relative-time suffix ("just now", "3h ago", ...)
+    // isn't predictable enough to match exactly.
+    expect(find.textContaining('Deleted '), findsOneWidget);
   });
 
   testWidgets('Restore moves the entry back to active', (tester) async {
@@ -66,6 +69,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining("Can't restore"), findsOneWidget);
+    expect(repository.deletedEntries, hasLength(1));
+  });
+
+  testWidgets('a repository failure while restoring shows a SnackBar and keeps the entry in the trash', (tester) async {
+    final repository = await pumpScreen(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+    repository.throwOnRestore = true;
+
+    await tester.tap(find.byTooltip('Restore'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't restore. Please try again."), findsOneWidget);
+    expect(repository.deletedEntries, hasLength(1));
+    expect(repository.entries, isEmpty);
+  });
+
+  testWidgets('a repository failure while permanently deleting shows a SnackBar and keeps the entry', (tester) async {
+    final repository = await pumpScreen(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+    repository.throwOnPermanentlyDelete = true;
+
+    await tester.tap(find.byTooltip('Delete permanently'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't delete. Please try again."), findsOneWidget);
     expect(repository.deletedEntries, hasLength(1));
   });
 

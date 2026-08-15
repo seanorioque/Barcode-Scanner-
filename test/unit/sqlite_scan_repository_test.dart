@@ -211,6 +211,55 @@ void main() {
     expect(await File(imagePath).exists(), isFalse);
   });
 
+  test(
+    'updating an existing row to a value colliding with another active row does not crash or lose data',
+    () async {
+      await repository.save(makeEntry(id: '1', value: 'a'));
+      await repository.save(makeEntry(id: '2', value: 'b'));
+
+      // Simulates what would happen if value editing were ever added: an
+      // update-by-id (the row already exists) whose new value collides with
+      // another active row's unique index. The update branch in save() must
+      // be guarded the same way the insert branch already is.
+      await expectLater(repository.save(makeEntry(id: '1', value: 'b')), completes);
+
+      final entries = await repository.watchEntries().first;
+      expect(entries, hasLength(2));
+      expect(entries.firstWhere((e) => e.id == '1').value, 'a');
+      expect(entries.firstWhere((e) => e.id == '2').value, 'b');
+    },
+  );
+
+  test('purgeOrphanedImages deletes unreferenced files, keeps referenced and soft-deleted-referenced ones', () async {
+    final dir = await Directory.systemTemp.createTemp('orphan_test_');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+
+    final referencedPath = p.join(dir.path, 'referenced.jpg');
+    final deletedRowPath = p.join(dir.path, 'deleted_row.jpg');
+    final orphanPath = p.join(dir.path, 'orphan.jpg');
+    await File(referencedPath).writeAsBytes([0]);
+    await File(deletedRowPath).writeAsBytes([0]);
+    await File(orphanPath).writeAsBytes([0]);
+
+    await repository.save(makeEntry(id: '1', value: 'active', imagePath: referencedPath));
+    await repository.save(makeEntry(id: '2', value: 'trashed', imagePath: deletedRowPath));
+    await repository.softDelete('2');
+
+    await repository.purgeOrphanedImages(dir);
+
+    expect(await File(referencedPath).exists(), isTrue);
+    expect(await File(deletedRowPath).exists(), isTrue);
+    expect(await File(orphanPath).exists(), isFalse);
+  });
+
+  test('purgeOrphanedImages is a no-op when the directory does not exist', () async {
+    final dir = Directory(p.join(Directory.systemTemp.path, 'does_not_exist_${DateTime.now().microsecondsSinceEpoch}'));
+
+    await expectLater(repository.purgeOrphanedImages(dir), completes);
+  });
+
   test('migrating from v2 deduplicates active rows sharing a value', () async {
     final path = p.join(Directory.systemTemp.path, 'migration_test_${DateTime.now().microsecondsSinceEpoch}.db');
     addTearDown(() async {

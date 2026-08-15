@@ -12,7 +12,14 @@ class RecentlyDeletedScreen extends ConsumerWidget {
 
   Future<void> _restore(BuildContext context, WidgetRef ref, ScanEntry entry) async {
     final repository = ref.read(scanRepositoryProvider);
-    final restored = await repository.restore(entry.id);
+    bool restored;
+    try {
+      restored = await repository.restore(entry.id);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't restore. Please try again.")));
+      return;
+    }
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -36,7 +43,12 @@ class RecentlyDeletedScreen extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
-    await ref.read(scanRepositoryProvider).permanentlyDelete(entry.id);
+    try {
+      await ref.read(scanRepositoryProvider).permanentlyDelete(entry.id);
+    } catch (_) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't delete. Please try again.")));
+    }
   }
 
   @override

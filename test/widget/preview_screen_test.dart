@@ -161,6 +161,25 @@ void main() {
     expect(repository.entries.single.label, isNull);
   });
 
+  testWidgets('a repository save failure shows a SnackBar and leaves Save tappable to retry', (tester) async {
+    await pumpDetected(tester);
+    repository.throwOnSave = true;
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't save. Please try again."), findsOneWidget);
+    expect(find.byType(PreviewScreen), findsOneWidget);
+    expect(repository.entries, isEmpty);
+
+    repository.throwOnSave = false;
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(repository.entries, hasLength(1));
+    expect(find.byType(PreviewScreen), findsNothing);
+  });
+
   testWidgets('Rescan discards without saving and pops back to capture', (tester) async {
     await pumpDetected(tester);
 

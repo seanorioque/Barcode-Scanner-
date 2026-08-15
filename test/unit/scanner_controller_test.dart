@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:barcode_scanner/app_providers.dart';
 import 'package:barcode_scanner/domain/barcode_scanner_service.dart';
 import 'package:barcode_scanner/domain/scan_entry.dart';
 import 'package:barcode_scanner/ui/capture/scanner_controller.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 
 import '../fakes/fake_barcode_scanner_service.dart';
 import '../fakes/fake_scan_repository.dart';
@@ -226,6 +229,98 @@ void main() {
 
     expect(repository.entries, isEmpty);
     expect(container.read(scannerControllerProvider).phase, ScanPhase.idle);
+  });
+
+  test('rescan after a fresh capture deletes the abandoned photo file', () async {
+    final dir = await Directory.systemTemp.createTemp('scanner_controller_test_');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final freshPath = p.join(dir.path, 'fresh.jpg');
+    await File(freshPath).writeAsBytes([0]);
+    service.imageToCapture = freshPath;
+
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(scannerControllerProvider).imagePath, freshPath);
+    expect(await File(freshPath).exists(), isTrue);
+
+    await notifier.rescan();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(await File(freshPath).exists(), isFalse);
+  });
+
+  test('rescan after a duplicate detection does not delete the entry\'s stored image', () async {
+    final dir = await Directory.systemTemp.createTemp('scanner_controller_test_');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final storedPath = p.join(dir.path, 'stored.jpg');
+    await File(storedPath).writeAsBytes([0]);
+    await repository.save(
+      ScanEntry(id: 'old', value: 'dup', format: 'CODE_128', imagePath: storedPath, scannedAt: DateTime.utc(2026, 1, 1)),
+    );
+
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    service.emit(const [
+      BarcodeDetection(value: 'dup', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(scannerControllerProvider).imagePath, storedPath);
+
+    await notifier.rescan();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(await File(storedPath).exists(), isTrue);
+  });
+
+  test('save surfaces a repository write failure, returns to detected, and can be retried', () async {
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+
+    repository.throwOnSave = true;
+    await notifier.save(label: 'Groceries');
+
+    final failedState = container.read(scannerControllerProvider);
+    expect(failedState.phase, ScanPhase.detected);
+    expect(failedState.saveError, isNotNull);
+    expect(failedState.detection?.value, 'abc');
+    expect(repository.entries, isEmpty);
+
+    repository.throwOnSave = false;
+    await notifier.save(label: 'Groceries');
+
+    final retriedState = container.read(scannerControllerProvider);
+    expect(retriedState.phase, ScanPhase.idle);
+    expect(repository.entries, hasLength(1));
+  });
+
+  test('dismissSaveError clears saveError without touching anything else', () async {
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+    repository.throwOnSave = true;
+    await notifier.save(label: 'Groceries');
+    expect(container.read(scannerControllerProvider).saveError, isNotNull);
+
+    notifier.dismissSaveError();
+
+    final state = container.read(scannerControllerProvider);
+    expect(state.saveError, isNull);
+    expect(state.phase, ScanPhase.detected);
   });
 
   test('save is a no-op for a duplicate detection', () async {

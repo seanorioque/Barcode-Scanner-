@@ -210,6 +210,95 @@ void main() {
     expect(repository.entries.single.label, 'Pantry');
   });
 
+  testWidgets('a repository save failure while editing a label shows a SnackBar and leaves the label unchanged', (
+    tester,
+  ) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+      ],
+    );
+    repository.throwOnSave = true;
+
+    await tester.tap(find.byKey(const ValueKey('label_1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(dialogTextField, 'Garage');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't save. Please try again."), findsOneWidget);
+    expect(repository.entries.single.label, 'Pantry');
+  });
+
+  testWidgets('a repository failure while deleting shows a SnackBar and keeps the entry', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+    repository.throwOnSoftDelete = true;
+
+    await tester.drag(find.text('AAA111'), const Offset(-500, 0));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text("Couldn't delete. Please try again."), findsOneWidget);
+    expect(repository.entries, hasLength(1));
+  });
+
+  testWidgets('the debug menu can clear all data, active and trashed', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+    await repository.save(ScanEntry(id: '2', value: 'BBB222', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 2)));
+    await repository.softDelete('2');
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.bug_report_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear all data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
+    await tester.pumpAndSettle();
+
+    expect(repository.entries, isEmpty);
+    expect(repository.deletedEntries, isEmpty);
+  });
+
+  testWidgets('the debug menu can purge trash now, bypassing the retention period', (tester) async {
+    final repository = await pumpEntries(tester);
+    await repository.save(ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1)));
+    await repository.softDelete('1');
+    await tester.pump();
+
+    await tester.tap(find.byIcon(Icons.bug_report_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Purge trash now'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Confirm'));
+    await tester.pumpAndSettle();
+
+    expect(repository.deletedEntries, isEmpty);
+  });
+
+  testWidgets('Cancel in the debug clear-all confirmation keeps the data', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.tap(find.byIcon(Icons.bug_report_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clear all data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(repository.entries, hasLength(1));
+  });
+
   testWidgets('long-pressing an entry enters selection mode and shows a checkbox', (tester) async {
     await pumpEntries(
       tester,

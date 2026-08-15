@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
@@ -24,6 +25,7 @@ class ScannerState {
     this.duplicateOf,
     this.torchOn = false,
     this.imagePath,
+    this.saveError,
   });
 
   final ScanPhase phase;
@@ -37,6 +39,12 @@ class ScannerState {
   /// Path to the photo captured at detection time, once capture finishes.
   final String? imagePath;
 
+  /// Set when [ScannerController.save] fails (e.g. a disk-full or
+  /// permission error from the repository). Preview renders this as a
+  /// SnackBar, then dismisses it; `phase` is already back to `detected` so
+  /// the user can just retry.
+  final String? saveError;
+
   ScannerState copyWith({
     ScanPhase? phase,
     BarcodeDetection? detection,
@@ -48,6 +56,8 @@ class ScannerState {
     bool? torchOn,
     String? imagePath,
     bool clearImagePath = false,
+    String? saveError,
+    bool clearSaveError = false,
   }) {
     return ScannerState(
       phase: phase ?? this.phase,
@@ -56,9 +66,15 @@ class ScannerState {
       duplicateOf: clearDuplicateOf ? null : (duplicateOf ?? this.duplicateOf),
       torchOn: torchOn ?? this.torchOn,
       imagePath: clearImagePath ? null : (imagePath ?? this.imagePath),
+      saveError: clearSaveError ? null : (saveError ?? this.saveError),
     );
   }
 }
+
+/// Plain, exception-free message shown to the user when a repository write
+/// fails. Deliberately vague — disk-full, corruption, and permission errors
+/// all land here, and none of that detail is actionable for the user.
+const _saveFailedMessage = "Couldn't save. Please try again.";
 
 class ScannerController extends Notifier<ScannerState> {
   late final BarcodeScannerService _service;
@@ -66,26 +82,58 @@ class ScannerController extends Notifier<ScannerState> {
   final Uuid _uuid = const Uuid();
   StreamSubscription<List<BarcodeDetection>>? _sub;
 
+  // Plain-field mirror of state.imagePath/state.duplicateOf?.imagePath, kept
+  // in sync by _setState. ref.onDispose can't read `state` itself (the
+  // notifier's `state` getter asserts "Cannot use Ref ... inside
+  // life-cycles" when called from inside a dispose callback), so cleanup on
+  // dispose reads these plain fields instead.
+  String? _imagePathForCleanup;
+  String? _duplicateImagePathForCleanup;
+
   @override
   ScannerState build() {
     _service = ref.watch(barcodeScannerServiceProvider);
     _repository = ref.watch(scanRepositoryProvider);
     ref.onDispose(() {
       unawaited(_sub?.cancel());
+      unawaited(_deleteAbandonedImage(_imagePathForCleanup, _duplicateImagePathForCleanup));
     });
     return const ScannerState();
   }
 
+  void _setState(ScannerState next) {
+    state = next;
+    _imagePathForCleanup = next.imagePath;
+    _duplicateImagePathForCleanup = next.duplicateOf?.imagePath;
+  }
+
+  /// Deletes [imagePath] unless it's `null` or it's actually
+  /// [duplicateImagePath] — the photo already on file for a duplicate entry,
+  /// which must never be touched. Called wherever a detection's photo can be
+  /// abandoned without ever being saved: rescanning past it, or leaving
+  /// Capture (provider dispose) before deciding.
+  Future<void> _deleteAbandonedImage(String? imagePath, String? duplicateImagePath) async {
+    if (imagePath == null || imagePath == duplicateImagePath) return;
+    try {
+      final file = File(imagePath);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Best-effort cleanup; a stray file is the failure mode, not a crash.
+    }
+  }
+
   Future<void> start() async {
-    state = state.copyWith(
-      phase: ScanPhase.scanning,
-      clearDetection: true,
-      clearUnavailableReason: true,
-      clearImagePath: true,
+    _setState(
+      state.copyWith(
+        phase: ScanPhase.scanning,
+        clearDetection: true,
+        clearUnavailableReason: true,
+        clearImagePath: true,
+      ),
     );
     final result = await _service.start();
     if (!result.isReady) {
-      state = state.copyWith(phase: ScanPhase.unavailable, unavailableReason: result.reason);
+      _setState(state.copyWith(phase: ScanPhase.unavailable, unavailableReason: result.reason));
       return;
     }
     await _sub?.cancel();
@@ -94,7 +142,7 @@ class ScannerController extends Notifier<ScannerState> {
     // the service rather than listening for it, so it only ever notices a
     // freshly-initialized controller on the next rebuild. Nothing else
     // triggers one between here and the first detection, so force it.
-    state = state.copyWith(phase: ScanPhase.scanning);
+    _setState(state.copyWith(phase: ScanPhase.scanning));
   }
 
   void _onDetections(List<BarcodeDetection> frame) {
@@ -105,7 +153,7 @@ class ScannerController extends Notifier<ScannerState> {
     // Flip out of `scanning` synchronously so a second frame arriving before
     // the duplicate lookup below resolves can't start a concurrent
     // resolution for the same detection.
-    state = state.copyWith(phase: ScanPhase.resolving);
+    _setState(state.copyWith(phase: ScanPhase.resolving));
     unawaited(_resolveDetection(selected));
   }
 
@@ -117,17 +165,19 @@ class ScannerController extends Notifier<ScannerState> {
     final duplicate = await _repository.findMostRecentByValue(selected.value);
     if (duplicate != null) {
       await _service.stop();
-      state = state.copyWith(
-        phase: ScanPhase.detected,
-        detection: selected,
-        duplicateOf: duplicate,
-        imagePath: duplicate.imagePath,
-        clearImagePath: duplicate.imagePath == null,
+      _setState(
+        state.copyWith(
+          phase: ScanPhase.detected,
+          detection: selected,
+          duplicateOf: duplicate,
+          imagePath: duplicate.imagePath,
+          clearImagePath: duplicate.imagePath == null,
+        ),
       );
       return;
     }
 
-    state = state.copyWith(phase: ScanPhase.detected, detection: selected, clearDuplicateOf: true);
+    _setState(state.copyWith(phase: ScanPhase.detected, detection: selected, clearDuplicateOf: true));
     unawaited(_captureImageThenStop(selected));
   }
 
@@ -136,27 +186,31 @@ class ScannerController extends Notifier<ScannerState> {
   Future<void> _captureImageThenStop(BarcodeDetection detection) async {
     final imagePath = await _service.captureImage(detection.boundingBox);
     if (state.detection?.value == detection.value && imagePath != null) {
-      state = state.copyWith(imagePath: imagePath);
+      _setState(state.copyWith(imagePath: imagePath));
     }
     await _service.stop();
   }
 
   Future<void> rescan() async {
-    state = state.copyWith(
-      phase: ScanPhase.scanning,
-      clearDetection: true,
-      clearDuplicateOf: true,
-      clearUnavailableReason: true,
-      clearImagePath: true,
+    unawaited(_deleteAbandonedImage(state.imagePath, state.duplicateOf?.imagePath));
+    _setState(
+      state.copyWith(
+        phase: ScanPhase.scanning,
+        clearDetection: true,
+        clearDuplicateOf: true,
+        clearUnavailableReason: true,
+        clearImagePath: true,
+        clearSaveError: true,
+      ),
     );
     final result = await _service.start();
     if (!result.isReady) {
-      state = state.copyWith(phase: ScanPhase.unavailable, unavailableReason: result.reason);
+      _setState(state.copyWith(phase: ScanPhase.unavailable, unavailableReason: result.reason));
       return;
     }
     await _sub?.cancel();
     _sub = _service.detections.listen(_onDetections);
-    state = state.copyWith(phase: ScanPhase.scanning);
+    _setState(state.copyWith(phase: ScanPhase.scanning));
   }
 
   Future<void> save({String? label}) async {
@@ -166,7 +220,7 @@ class ScannerController extends Notifier<ScannerState> {
     // the DB's partial unique index: never persist a known duplicate.
     if (state.duplicateOf != null) return;
 
-    state = state.copyWith(phase: ScanPhase.saving);
+    _setState(state.copyWith(phase: ScanPhase.saving, clearSaveError: true));
     final trimmedLabel = label?.trim();
     final entry = ScanEntry(
       id: _uuid.v4(),
@@ -176,15 +230,31 @@ class ScannerController extends Notifier<ScannerState> {
       scannedAt: DateTime.now().toUtc(),
       imagePath: state.imagePath,
     );
-    await _repository.save(entry);
+    try {
+      await _repository.save(entry);
+    } catch (_) {
+      // Leaves phase back at `detected` (Preview's Save button un-spins)
+      // and the detection/image intact so the user can just retry.
+      _setState(state.copyWith(phase: ScanPhase.detected, saveError: _saveFailedMessage));
+      return;
+    }
     await _sub?.cancel();
     await _service.stop();
-    state = state.copyWith(
-      phase: ScanPhase.idle,
-      clearDetection: true,
-      clearDuplicateOf: true,
-      clearImagePath: true,
+    _setState(
+      state.copyWith(
+        phase: ScanPhase.idle,
+        clearDetection: true,
+        clearDuplicateOf: true,
+        clearImagePath: true,
+      ),
     );
+  }
+
+  /// Clears [ScannerState.saveError] once Preview has shown it as a
+  /// SnackBar, so it doesn't reappear on an unrelated rebuild.
+  void dismissSaveError() {
+    if (state.saveError == null) return;
+    _setState(state.copyWith(clearSaveError: true));
   }
 
   /// Releases the camera while the app is backgrounded, without disturbing
@@ -209,7 +279,7 @@ class ScannerController extends Notifier<ScannerState> {
   Future<void> toggleTorch() async {
     final next = !state.torchOn;
     await _service.setTorchEnabled(next);
-    state = state.copyWith(torchOn: next);
+    _setState(state.copyWith(torchOn: next));
   }
 }
 

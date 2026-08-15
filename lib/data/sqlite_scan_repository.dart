@@ -152,16 +152,20 @@ class SqliteScanRepository implements ScanRepository {
     // key, so inserting a genuinely new row that happens to collide with an
     // unrelated existing row on `value` would silently delete that row and
     // replace it — exactly the duplicate this app is trying to prevent.
-    final updated = await db.update(_tableName, _rowFromEntry(entry), where: 'id = ?', whereArgs: [entry.id]);
-    if (updated == 0) {
-      try {
+    //
+    // Both branches are guarded: callers are expected to check
+    // findMostRecentByValue before saving, and today only the label is
+    // editable (FR-19, ambiguity #11) so the update branch can't actually
+    // hit the unique-value index. The guard stays anyway — if value editing
+    // is ever added, an update colliding with another active row must keep
+    // the existing rows rather than crash, same as a colliding insert does.
+    try {
+      final updated = await db.update(_tableName, _rowFromEntry(entry), where: 'id = ?', whereArgs: [entry.id]);
+      if (updated == 0) {
         await db.insert(_tableName, _rowFromEntry(entry), conflictAlgorithm: ConflictAlgorithm.abort);
-      } on DatabaseException catch (e) {
-        // Backstop only: callers are expected to check findMostRecentByValue
-        // before saving. If a same-value active row still slipped in
-        // concurrently, keep the existing one rather than crash.
-        if (!e.isUniqueConstraintError()) rethrow;
       }
+    } on DatabaseException catch (e) {
+      if (!e.isUniqueConstraintError()) rethrow;
     }
     await _refresh();
   }
@@ -210,6 +214,24 @@ class SqliteScanRepository implements ScanRepository {
   }
 
   @override
+  Future<void> purgeOrphanedImages(Directory imagesDir) async {
+    if (!await imagesDir.exists()) return;
+    final db = await _open();
+    final rows = await db.query(_tableName, columns: ['image_path']);
+    final referenced = rows.map((r) => r['image_path'] as String?).whereType<String>().toSet();
+    await for (final entity in imagesDir.list()) {
+      if (entity is! File) continue;
+      if (!referenced.contains(entity.path)) {
+        try {
+          await entity.delete();
+        } catch (_) {
+          // Best-effort, same as _deleteImageFile.
+        }
+      }
+    }
+  }
+
+  @override
   Future<ScanEntry?> findMostRecentByValue(String value) async {
     final db = await _open();
     final rows = await db.query(
@@ -223,6 +245,10 @@ class SqliteScanRepository implements ScanRepository {
     return _entryFromRow(rows.first);
   }
 
+  /// Test-only. App code deliberately never calls this — the database and
+  /// both stream controllers are meant to live for the whole process
+  /// lifetime, and the OS reclaims them on exit. Tests call it between
+  /// cases to avoid leaking connections/streams across a suite.
   Future<void> close() async {
     await _db?.close();
     await _controller.close();

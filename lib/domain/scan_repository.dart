@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'scan_entry.dart';
 
 /// Persistence boundary for [ScanEntry]. Implemented against SQLite in
@@ -27,4 +29,10 @@ abstract class ScanRepository {
   /// The most recently saved *active* entry with this exact value, if any.
   /// Used to surface "already scanned on {date}" in preview.
   Future<ScanEntry?> findMostRecentByValue(String value);
+
+  /// Deletes any file directly inside [imagesDir] that isn't referenced by
+  /// an `image_path` on any row (active or soft-deleted). A backstop for
+  /// photos left behind by an abandoned scan (rescan/dispose before save) —
+  /// a no-op if [imagesDir] doesn't exist.
+  Future<void> purgeOrphanedImages(Directory imagesDir);
 }

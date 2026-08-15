@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -13,6 +14,13 @@ import '../recently_deleted/recently_deleted_screen.dart';
 /// How long the delete "Undo" snackbar stays up before the deletion is
 /// treated as final.
 const _undoDuration = Duration(seconds: 5);
+
+/// Plain, exception-free messages for repository write failures (disk-full,
+/// corruption, permissions, ...) — no exception detail is actionable for
+/// the user, so all of them collapse to one of these.
+const _saveFailedMessage = "Couldn't save. Please try again.";
+const _deleteFailedMessage = "Couldn't delete. Please try again.";
+const _restoreFailedMessage = "Couldn't restore. Please try again.";
 
 class EntriesScreen extends ConsumerStatefulWidget {
   const EntriesScreen({super.key});
@@ -47,6 +55,71 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RecentlyDeletedScreen()));
   }
 
+  Future<bool> _confirmDebugAction(String title, String message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Confirm')),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
+  /// Debug-only test fixture (see requirements.md P2-2): duplicate blocking
+  /// (FR-22) means each barcode value can only ever be saved once, which
+  /// makes manually retesting scan -> preview -> save tedious without a way
+  /// to wipe the slate. Reuses the existing public repository API rather
+  /// than adding one purely for this.
+  Future<void> _debugClearAllData() async {
+    final confirmed = await _confirmDebugAction(
+      'Clear all data?',
+      'Debug only: permanently deletes every entry and photo, active and trashed.',
+    );
+    if (!confirmed) return;
+
+    final repository = ref.read(scanRepositoryProvider);
+    final active = await repository.watchEntries().first;
+    final deleted = await repository.watchDeletedEntries().first;
+    for (final entry in [...active, ...deleted]) {
+      await repository.permanentlyDelete(entry.id);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('All data cleared')));
+  }
+
+  /// Debug-only test fixture (see requirements.md P2-3): the 30-day
+  /// retention sweep is otherwise unobservable on a device without editing
+  /// code and rebuilding. Permanently deletes everything currently in
+  /// Recently Deleted right now, bypassing the retention period, so the
+  /// row+photo purge behavior can be verified on demand.
+  Future<void> _debugPurgeTrashNow() async {
+    final repository = ref.read(scanRepositoryProvider);
+    final deleted = await repository.watchDeletedEntries().first;
+    if (deleted.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recently Deleted is already empty')));
+      return;
+    }
+
+    final confirmed = await _confirmDebugAction(
+      'Purge trash now?',
+      'Debug only: permanently deletes all ${deleted.length} '
+          '${deleted.length == 1 ? 'entry' : 'entries'} currently in Recently Deleted, bypassing the retention period.',
+    );
+    if (!confirmed) return;
+
+    for (final entry in deleted) {
+      await repository.permanentlyDelete(entry.id);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trash purged')));
+  }
+
   void _toggleSelection(String id) {
     setState(() {
       if (!_selectedIds.remove(id)) _selectedIds.add(id);
@@ -72,7 +145,14 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
 
   Future<void> _deleteWithUndo(ScanEntry entry) async {
     final repository = ref.read(scanRepositoryProvider);
-    await repository.softDelete(entry.id);
+    try {
+      await repository.softDelete(entry.id);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_deleteFailedMessage)));
+      }
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -82,7 +162,15 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            final restored = await repository.restore(entry.id);
+            bool restored;
+            try {
+              restored = await repository.restore(entry.id);
+            } catch (_) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_restoreFailedMessage)));
+              }
+              return;
+            }
             if (!restored && mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Can't undo — that value is active again")),
@@ -104,8 +192,16 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     if (!confirmed) return;
 
     final repository = ref.read(scanRepositoryProvider);
-    for (final id in ids) {
-      await repository.softDelete(id);
+    try {
+      for (final id in ids) {
+        await repository.softDelete(id);
+      }
+    } catch (_) {
+      _clearSelection();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_deleteFailedMessage)));
+      }
+      return;
     }
     _clearSelection();
     if (!mounted) return;
@@ -118,14 +214,20 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
-            var failures = 0;
-            for (final id in ids) {
-              if (!await repository.restore(id)) failures++;
-            }
-            if (failures > 0 && mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('$failures item(s) couldn\'t be restored — already active again')),
-              );
+            try {
+              var failures = 0;
+              for (final id in ids) {
+                if (!await repository.restore(id)) failures++;
+              }
+              if (failures > 0 && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$failures item(s) couldn\'t be restored — already active again')),
+                );
+              }
+            } catch (_) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_restoreFailedMessage)));
+              }
             }
           },
         ),
@@ -142,7 +244,13 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
 
     final trimmed = newLabel.trim();
     final repository = ref.read(scanRepositoryProvider);
-    await repository.save(trimmed.isEmpty ? entry.copyWith(clearLabel: true) : entry.copyWith(label: trimmed));
+    try {
+      await repository.save(trimmed.isEmpty ? entry.copyWith(clearLabel: true) : entry.copyWith(label: trimmed));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(_saveFailedMessage)));
+      }
+    }
   }
 
   List<ScanEntry> _filter(List<ScanEntry> entries) {
@@ -179,6 +287,15 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
                   tooltip: 'Recently Deleted',
                   icon: const Icon(Icons.restore_from_trash),
                 ),
+                if (kDebugMode)
+                  PopupMenuButton<void>(
+                    tooltip: 'Debug tools',
+                    icon: const Icon(Icons.bug_report_outlined),
+                    itemBuilder: (context) => [
+                      PopupMenuItem(onTap: _debugClearAllData, child: const Text('Clear all data')),
+                      PopupMenuItem(onTap: _debugPurgeTrashNow, child: const Text('Purge trash now')),
+                    ],
+                  ),
               ],
               bottom: PreferredSize(
                 preferredSize: const Size.fromHeight(56),

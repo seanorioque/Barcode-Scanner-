@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app_providers.dart';
 import '../../domain/barcode_formats.dart';
 import '../../domain/manual_entry.dart';
+import '../../domain/scan_entry.dart';
 import '../format_time.dart';
 
 class ManualEntryScreen extends ConsumerStatefulWidget {
@@ -37,13 +38,22 @@ class _ManualEntryScreenState extends ConsumerState<ManualEntryScreen> {
     });
 
     final repository = ref.read(scanRepositoryProvider);
-    final duplicate = await saveManualEntry(repository, value: value, format: _format, label: _labelController.text);
+    final ScanEntry? duplicate;
+    try {
+      duplicate = await saveManualEntry(repository, value: value, format: _format, label: _labelController.text);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Couldn't save. Please try again.")));
+      return;
+    }
 
     if (!mounted) return;
     if (duplicate != null) {
+      final scannedAt = duplicate.scannedAt;
       setState(() {
         _saving = false;
-        _duplicateScannedAt = duplicate.scannedAt;
+        _duplicateScannedAt = scannedAt;
       });
       return;
     }

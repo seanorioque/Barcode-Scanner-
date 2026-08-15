@@ -1,7 +1,22 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:barcode_scanner/domain/scan_entry.dart';
 import 'package:barcode_scanner/domain/scan_repository.dart';
+import 'package:sqflite/sqflite.dart';
+
+/// A [DatabaseException] that doesn't need a real database connection to
+/// construct, for tests simulating a repository write failure (disk-full,
+/// corruption, permissions, ...) that isn't a unique-constraint error.
+class FakeDatabaseException extends DatabaseException {
+  FakeDatabaseException() : super('simulated database failure');
+
+  @override
+  int? getResultCode() => null;
+
+  @override
+  Object? get result => null;
+}
 
 /// In-memory [ScanRepository] for widget/unit tests that need repository
 /// behaviour without a real database.
@@ -9,6 +24,14 @@ class FakeScanRepository implements ScanRepository {
   final List<ScanEntry> _entries = [];
   final _controller = StreamController<List<ScanEntry>>.broadcast();
   final _deletedController = StreamController<List<ScanEntry>>.broadcast();
+
+  /// When true, the matching method throws a non-unique-constraint
+  /// [FakeDatabaseException] instead of writing, simulating disk-full,
+  /// corruption, or permission errors from the real database.
+  bool throwOnSave = false;
+  bool throwOnSoftDelete = false;
+  bool throwOnRestore = false;
+  bool throwOnPermanentlyDelete = false;
 
   /// Active (non-deleted) entries.
   List<ScanEntry> get entries => List.unmodifiable(_entries.where((e) => e.deletedAt == null));
@@ -40,6 +63,7 @@ class FakeScanRepository implements ScanRepository {
 
   @override
   Future<void> save(ScanEntry entry) async {
+    if (throwOnSave) throw FakeDatabaseException();
     _entries.removeWhere((e) => e.id == entry.id);
     _entries.add(entry);
     _emit();
@@ -47,6 +71,7 @@ class FakeScanRepository implements ScanRepository {
 
   @override
   Future<void> softDelete(String id) async {
+    if (throwOnSoftDelete) throw FakeDatabaseException();
     final index = _entries.indexWhere((e) => e.id == id);
     if (index == -1) return;
     _entries[index] = ScanEntry(
@@ -64,6 +89,7 @@ class FakeScanRepository implements ScanRepository {
 
   @override
   Future<bool> restore(String id) async {
+    if (throwOnRestore) throw FakeDatabaseException();
     final index = _entries.indexWhere((e) => e.id == id);
     if (index == -1) return false;
     final entry = _entries[index];
@@ -85,6 +111,7 @@ class FakeScanRepository implements ScanRepository {
 
   @override
   Future<void> permanentlyDelete(String id) async {
+    if (throwOnPermanentlyDelete) throw FakeDatabaseException();
     _entries.removeWhere((e) => e.id == id);
     _emitDeleted();
   }
@@ -94,6 +121,10 @@ class FakeScanRepository implements ScanRepository {
     final matches = entries.where((e) => e.value == value).toList()..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
     return matches.isEmpty ? null : matches.first;
   }
+
+  /// No files to purge in-memory; present only to satisfy the interface.
+  @override
+  Future<void> purgeOrphanedImages(Directory imagesDir) async {}
 
   Future<void> dispose() async {
     await _controller.close();
