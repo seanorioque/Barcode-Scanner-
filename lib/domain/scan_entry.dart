@@ -7,6 +7,7 @@ class ScanEntry {
     required this.scannedAt,
     this.label,
     this.imagePath,
+    this.deletedAt,
   });
 
   final String id;
@@ -17,6 +18,9 @@ class ScanEntry {
 
   /// Path to a saved photo of the scanned barcode, if one was captured.
   final String? imagePath;
+
+  /// When this entry was moved to Recently Deleted. `null` means active.
+  final DateTime? deletedAt;
 
   /// Pass [label] to set it, or [clearLabel] to explicitly reset it to
   /// `null` (plain `label: null` would otherwise be indistinguishable from
@@ -29,6 +33,7 @@ class ScanEntry {
       scannedAt: scannedAt,
       label: clearLabel ? null : (label ?? this.label),
       imagePath: imagePath,
+      deletedAt: deletedAt,
     );
   }
 }
