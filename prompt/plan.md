@@ -13,7 +13,7 @@ flutter pub get
 flutter run
 ```
 
-**Requirements:** Flutter 3.x (stable), Android 8.0+ (API 26) or iOS 13+. A physical device is needed for scanning — the camera path is not usable on a simulator.
+**Requirements:** Flutter 3.x (stable), Android 8.0+ (API 26) or iOS 15.5+ (the floor `google_mlkit_barcode_scanning`/`google_mlkit_commons` actually pin via their podspecs — not the 13.0 the project started at). A physical device is needed for scanning — the camera path is not usable on a simulator.
 
 Permissions are declared in `android/app/src/main/AndroidManifest.xml` (`CAMERA`) and `ios/Runner/Info.plist` (`NSCameraUsageDescription`).
 
