@@ -9,9 +9,12 @@ import '../../domain/barcode_selector.dart';
 import '../../domain/scan_entry.dart';
 import '../../domain/scan_repository.dart';
 
-/// idle -> scanning -> detected -> saving -> idle, with `rescan` looping
-/// detected back to scanning. Mirrors the diagram in the app brief.
-enum ScanPhase { idle, scanning, unavailable, detected, saving }
+/// idle -> scanning -> resolving -> detected -> saving -> idle, with
+/// `rescan` looping detected back to scanning. `resolving` is the brief gap
+/// between a frame matching a code and the duplicate lookup finishing;
+/// nothing renders differently for it (the camera preview just keeps
+/// showing), it exists purely to guard against re-entrant frame handling.
+enum ScanPhase { idle, scanning, unavailable, resolving, detected, saving }
 
 class ScannerState {
   const ScannerState({
@@ -99,15 +102,25 @@ class ScannerController extends Notifier<ScannerState> {
     final selected = selectBarcode(frame);
     if (selected == null) return;
 
-    state = state.copyWith(phase: ScanPhase.detected, detection: selected);
+    // Flip out of `scanning` synchronously so a second frame arriving before
+    // the duplicate lookup below resolves can't start a concurrent
+    // resolution for the same detection.
+    state = state.copyWith(phase: ScanPhase.resolving);
     unawaited(_captureImageThenStop(selected));
-    unawaited(
-      _repository.findMostRecentByValue(selected.value).then((duplicate) {
-        if (state.detection?.value != selected.value) return;
-        if (duplicate != null) {
-          state = state.copyWith(duplicateOf: duplicate);
-        }
-      }),
+    unawaited(_resolveDetection(selected));
+  }
+
+  /// Looks up whether [selected] is a duplicate and only then publishes
+  /// `detected` — with `detection` and `duplicateOf` set together in one
+  /// state update, so Preview never observes a moment where Save looks
+  /// available before the duplicate check has actually completed.
+  Future<void> _resolveDetection(BarcodeDetection selected) async {
+    final duplicate = await _repository.findMostRecentByValue(selected.value);
+    state = state.copyWith(
+      phase: ScanPhase.detected,
+      detection: selected,
+      duplicateOf: duplicate,
+      clearDuplicateOf: duplicate == null,
     );
   }
 
@@ -115,7 +128,8 @@ class ScannerController extends Notifier<ScannerState> {
   /// the controller alive, and `stop()` fully disposes it.
   Future<void> _captureImageThenStop(BarcodeDetection detection) async {
     final imagePath = await _service.captureImage();
-    if (state.detection?.value == detection.value && imagePath != null) {
+    final stillCurrent = state.phase == ScanPhase.resolving || state.phase == ScanPhase.detected;
+    if (stillCurrent && imagePath != null) {
       state = state.copyWith(imagePath: imagePath);
     }
     await _service.stop();
@@ -142,6 +156,9 @@ class ScannerController extends Notifier<ScannerState> {
   Future<void> save({String? label}) async {
     final detection = state.detection;
     if (detection == null || state.phase != ScanPhase.detected) return;
+    // Belt and suspenders alongside the disabled Save button in Preview and
+    // the DB's partial unique index: never persist a known duplicate.
+    if (state.duplicateOf != null) return;
 
     state = state.copyWith(phase: ScanPhase.saving);
     final trimmedLabel = label?.trim();
