@@ -7,6 +7,8 @@ import '../../app_providers.dart';
 import '../../domain/scan_entry.dart';
 import '../capture/capture_screen.dart';
 import '../format_time.dart';
+import '../manual_entry/manual_entry_screen.dart';
+import '../recently_deleted/recently_deleted_screen.dart';
 
 class EntriesScreen extends ConsumerStatefulWidget {
   const EntriesScreen({super.key});
@@ -17,22 +19,60 @@ class EntriesScreen extends ConsumerStatefulWidget {
 
 class _EntriesScreenState extends ConsumerState<EntriesScreen> {
   final _revealedAbsolute = <String>{};
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   void _openCapture() {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => const CaptureScreen()));
   }
 
+  void _openManualEntry() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ManualEntryScreen()));
+  }
+
+  void _openRecentlyDeleted() {
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RecentlyDeletedScreen()));
+  }
+
+  Future<bool> _confirmDelete(ScanEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this scan?'),
+        content: Text('"${entry.value}" will be moved to Recently Deleted.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<void> _deleteWithUndo(ScanEntry entry) async {
     final repository = ref.read(scanRepositoryProvider);
-    await repository.delete(entry.id);
+    await repository.softDelete(entry.id);
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Deleted ${entry.value}'),
+        content: Text('Moved "${entry.value}" to Recently Deleted'),
         action: SnackBarAction(
           label: 'Undo',
-          onPressed: () => repository.save(entry),
+          onPressed: () async {
+            final restored = await repository.restore(entry.id);
+            if (!restored && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Can't undo — that value is active again")),
+              );
+            }
+          },
         ),
       ),
     );
@@ -50,23 +90,75 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     await repository.save(trimmed.isEmpty ? entry.copyWith(clearLabel: true) : entry.copyWith(label: trimmed));
   }
 
+  List<ScanEntry> _filter(List<ScanEntry> entries) {
+    final query = _query.trim().toLowerCase();
+    if (query.isEmpty) return entries;
+    return entries
+        .where((e) => e.value.toLowerCase().contains(query) || (e.label ?? '').toLowerCase().contains(query))
+        .toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final entriesAsync = ref.watch(entriesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Captured entries')),
+      appBar: AppBar(
+        title: const Text('Captured entries'),
+        actions: [
+          IconButton(
+            onPressed: _openManualEntry,
+            tooltip: 'Add manually',
+            icon: const Icon(Icons.add),
+          ),
+          IconButton(
+            onPressed: _openRecentlyDeleted,
+            tooltip: 'Recently Deleted',
+            icon: const Icon(Icons.restore_from_trash),
+          ),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              key: const ValueKey('entries_search'),
+              controller: _searchController,
+              onChanged: (value) => setState(() => _query = value),
+              decoration: InputDecoration(
+                hintText: 'Search by value or label',
+                prefixIcon: const Icon(Icons.search),
+                isDense: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                suffixIcon: _query.isEmpty
+                    ? null
+                    : IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => setState(() {
+                          _searchController.clear();
+                          _query = '';
+                        }),
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: _openCapture,
-        tooltip: 'Scan a code',
-        child: const Icon(Icons.qr_code_scanner),
+        tooltip: 'Scan a barcode',
+        child: const Icon(Icons.barcode_reader),
       ),
       body: entriesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(child: Text('Could not load entries: $error')),
-        data: (entries) {
-          if (entries.isEmpty) {
+        data: (allEntries) {
+          if (allEntries.isEmpty) {
             return _EmptyState(onScanPressed: _openCapture);
+          }
+          final entries = _filter(allEntries);
+          if (entries.isEmpty) {
+            return Center(child: Text('No matches for "$_query"', style: Theme.of(context).textTheme.bodyMedium));
           }
           return ListView.separated(
             itemCount: entries.length,
@@ -77,6 +169,7 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
               return Dismissible(
                 key: ValueKey(entry.id),
                 direction: DismissDirection.endToStart,
+                confirmDismiss: (_) => _confirmDelete(entry),
                 background: Container(
                   color: Theme.of(context).colorScheme.errorContainer,
                   alignment: Alignment.centerRight,
@@ -192,7 +285,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.qr_code_2, size: 96, color: Theme.of(context).colorScheme.outline),
+            Icon(Icons.barcode_reader, size: 96, color: Theme.of(context).colorScheme.outline),
             const SizedBox(height: 16),
             Text(
               'No scans yet',
@@ -207,8 +300,8 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onScanPressed,
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan your first code'),
+              icon: const Icon(Icons.barcode_reader),
+              label: const Text('Scan your first barcode'),
             ),
           ],
         ),
