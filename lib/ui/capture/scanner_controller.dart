@@ -106,30 +106,36 @@ class ScannerController extends Notifier<ScannerState> {
     // the duplicate lookup below resolves can't start a concurrent
     // resolution for the same detection.
     state = state.copyWith(phase: ScanPhase.resolving);
-    unawaited(_captureImageThenStop(selected));
     unawaited(_resolveDetection(selected));
   }
 
-  /// Looks up whether [selected] is a duplicate and only then publishes
-  /// `detected` — with `detection` and `duplicateOf` set together in one
-  /// state update, so Preview never observes a moment where Save looks
-  /// available before the duplicate check has actually completed.
+  /// Looks up whether [selected] is a duplicate *before* deciding whether to
+  /// capture a photo at all: a duplicate reuses the image already stored
+  /// from its first scan (faster, and matches "show what's on file"), so
+  /// there's no reason to take and crop a fresh one.
   Future<void> _resolveDetection(BarcodeDetection selected) async {
     final duplicate = await _repository.findMostRecentByValue(selected.value);
-    state = state.copyWith(
-      phase: ScanPhase.detected,
-      detection: selected,
-      duplicateOf: duplicate,
-      clearDuplicateOf: duplicate == null,
-    );
+    if (duplicate != null) {
+      await _service.stop();
+      state = state.copyWith(
+        phase: ScanPhase.detected,
+        detection: selected,
+        duplicateOf: duplicate,
+        imagePath: duplicate.imagePath,
+        clearImagePath: duplicate.imagePath == null,
+      );
+      return;
+    }
+
+    state = state.copyWith(phase: ScanPhase.detected, detection: selected, clearDuplicateOf: true);
+    unawaited(_captureImageThenStop(selected));
   }
 
   /// Takes the detection photo before releasing the camera — capture needs
   /// the controller alive, and `stop()` fully disposes it.
   Future<void> _captureImageThenStop(BarcodeDetection detection) async {
-    final imagePath = await _service.captureImage();
-    final stillCurrent = state.phase == ScanPhase.resolving || state.phase == ScanPhase.detected;
-    if (stillCurrent && imagePath != null) {
+    final imagePath = await _service.captureImage(detection.boundingBox);
+    if (state.detection?.value == detection.value && imagePath != null) {
       state = state.copyWith(imagePath: imagePath);
     }
     await _service.stop();
