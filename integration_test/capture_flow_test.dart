@@ -32,7 +32,7 @@ void main() {
 
     expect(find.text('No scans yet'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.qr_code_scanner));
+    await tester.tap(find.byIcon(Icons.barcode_reader));
     await tester.pumpAndSettle();
 
     // Stands in for a real camera frame containing a decoded barcode.
@@ -43,7 +43,7 @@ void main() {
     expect(find.text('9781234567897'), findsOneWidget);
     expect(find.text('EAN_13'), findsOneWidget);
 
-    await tester.enterText(find.byType(TextField), 'Cereal');
+    await tester.enterText(find.byKey(const ValueKey('preview_label_field')), 'Cereal');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
@@ -68,10 +68,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.qr_code_scanner));
+    await tester.tap(find.byIcon(Icons.barcode_reader));
     await tester.pumpAndSettle();
 
-    service.emit(const [BarcodeDetection(value: 'discard-me', format: 'QR_CODE', boundingBoxArea: 500)]);
+    service.emit(const [BarcodeDetection(value: 'discard-me', format: 'CODE_128', boundingBoxArea: 500)]);
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
