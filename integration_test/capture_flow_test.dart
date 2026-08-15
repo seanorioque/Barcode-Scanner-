@@ -36,7 +36,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // Stands in for a real camera frame containing a decoded barcode.
-    service.emit(const [BarcodeDetection(value: '9781234567897', format: 'EAN_13', boundingBoxArea: 500)]);
+    service.emit(const [
+      BarcodeDetection(
+        value: '9781234567897',
+        format: 'EAN_13',
+        boundingBoxArea: 500,
+        boundingBox: BarcodeBoundingBox.fullFrame(),
+      ),
+    ]);
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
@@ -71,7 +78,14 @@ void main() {
     await tester.tap(find.byIcon(Icons.barcode_reader));
     await tester.pumpAndSettle();
 
-    service.emit(const [BarcodeDetection(value: 'discard-me', format: 'CODE_128', boundingBoxArea: 500)]);
+    service.emit(const [
+      BarcodeDetection(
+        value: 'discard-me',
+        format: 'CODE_128',
+        boundingBoxArea: 500,
+        boundingBox: BarcodeBoundingBox.fullFrame(),
+      ),
+    ]);
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
 
