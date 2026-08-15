@@ -10,6 +10,10 @@ import '../format_time.dart';
 import '../manual_entry/manual_entry_screen.dart';
 import '../recently_deleted/recently_deleted_screen.dart';
 
+/// How long the delete "Undo" snackbar stays up before the deletion is
+/// treated as final.
+const _undoDuration = Duration(seconds: 5);
+
 class EntriesScreen extends ConsumerStatefulWidget {
   const EntriesScreen({super.key});
 
@@ -21,6 +25,9 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
   final _revealedAbsolute = <String>{};
   final _searchController = TextEditingController();
   String _query = '';
+  final _selectedIds = <String>{};
+
+  bool get _selectionMode => _selectedIds.isNotEmpty;
 
   @override
   void dispose() {
@@ -40,12 +47,20 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RecentlyDeletedScreen()));
   }
 
-  Future<bool> _confirmDelete(ScanEntry entry) async {
+  void _toggleSelection(String id) {
+    setState(() {
+      if (!_selectedIds.remove(id)) _selectedIds.add(id);
+    });
+  }
+
+  void _clearSelection() => setState(_selectedIds.clear);
+
+  Future<bool> _confirmDelete(String message) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Delete this scan?'),
-        content: Text('"${entry.value}" will be moved to Recently Deleted.'),
+        content: Text(message),
         actions: [
           TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
           FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Delete')),
@@ -63,6 +78,7 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Moved "${entry.value}" to Recently Deleted'),
+        duration: _undoDuration,
         action: SnackBarAction(
           label: 'Undo',
           onPressed: () async {
@@ -70,6 +86,45 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
             if (!restored && mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(content: Text("Can't undo — that value is active again")),
+              );
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteSelected() async {
+    final ids = _selectedIds.toList(growable: false);
+    final confirmed = await _confirmDelete(
+      ids.length == 1
+          ? 'This scan will be moved to Recently Deleted.'
+          : '${ids.length} scans will be moved to Recently Deleted.',
+    );
+    if (!confirmed) return;
+
+    final repository = ref.read(scanRepositoryProvider);
+    for (final id in ids) {
+      await repository.softDelete(id);
+    }
+    _clearSelection();
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ids.length == 1 ? '1 item moved to Recently Deleted' : '${ids.length} items moved to Recently Deleted'),
+        duration: _undoDuration,
+        action: SnackBarAction(
+          label: 'Undo',
+          onPressed: () async {
+            var failures = 0;
+            for (final id in ids) {
+              if (!await repository.restore(id)) failures++;
+            }
+            if (failures > 0 && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('$failures item(s) couldn\'t be restored — already active again')),
               );
             }
           },
@@ -103,52 +158,62 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     final entriesAsync = ref.watch(entriesProvider);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Captured entries'),
-        actions: [
-          IconButton(
-            onPressed: _openManualEntry,
-            tooltip: 'Add manually',
-            icon: const Icon(Icons.add),
-          ),
-          IconButton(
-            onPressed: _openRecentlyDeleted,
-            tooltip: 'Recently Deleted',
-            icon: const Icon(Icons.restore_from_trash),
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: TextField(
-              key: const ValueKey('entries_search'),
-              controller: _searchController,
-              onChanged: (value) => setState(() => _query = value),
-              decoration: InputDecoration(
-                hintText: 'Search by value or label',
-                prefixIcon: const Icon(Icons.search),
-                isDense: true,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () => setState(() {
-                          _searchController.clear();
-                          _query = '';
-                        }),
-                      ),
+      appBar: _selectionMode
+          ? AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: 'Cancel selection',
+                onPressed: _clearSelection,
+              ),
+              title: Text('${_selectedIds.length} selected'),
+              actions: [
+                IconButton(icon: const Icon(Icons.delete), tooltip: 'Delete selected', onPressed: _deleteSelected),
+              ],
+            )
+          : AppBar(
+              title: const Text('Captured entries'),
+              actions: [
+                IconButton(onPressed: _openManualEntry, tooltip: 'Add manually', icon: const Icon(Icons.add)),
+                IconButton(
+                  onPressed: _openRecentlyDeleted,
+                  tooltip: 'Recently Deleted',
+                  icon: const Icon(Icons.restore_from_trash),
+                ),
+              ],
+              bottom: PreferredSize(
+                preferredSize: const Size.fromHeight(56),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: TextField(
+                    key: const ValueKey('entries_search'),
+                    controller: _searchController,
+                    onChanged: (value) => setState(() => _query = value),
+                    decoration: InputDecoration(
+                      hintText: 'Search by value or label',
+                      prefixIcon: const Icon(Icons.search),
+                      isDense: true,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                      suffixIcon: _query.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () => setState(() {
+                                _searchController.clear();
+                                _query = '';
+                              }),
+                            ),
+                    ),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _openCapture,
-        tooltip: 'Scan a barcode',
-        child: const Icon(Icons.barcode_reader),
-      ),
+      floatingActionButton: _selectionMode
+          ? null
+          : FloatingActionButton(
+              onPressed: _openCapture,
+              tooltip: 'Scan a barcode',
+              child: const Icon(Icons.barcode_reader),
+            ),
       body: entriesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, stack) => Center(child: Text('Could not load entries: $error')),
@@ -166,10 +231,79 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
             itemBuilder: (context, index) {
               final entry = entries[index];
               final showAbsolute = _revealedAbsolute.contains(entry.id);
+              final selected = _selectedIds.contains(entry.id);
+
+              final tile = ListTile(
+                selected: selected,
+                onTap: _selectionMode ? () => _toggleSelection(entry.id) : null,
+                onLongPress: () => _toggleSelection(entry.id),
+                leading: _selectionMode
+                    ? Checkbox(value: selected, onChanged: (_) => _toggleSelection(entry.id))
+                    : switch (entry.imagePath) {
+                        final path? => ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Container(
+                            width: 48,
+                            height: 48,
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                            child: Image.file(File(path), fit: BoxFit.contain),
+                          ),
+                        ),
+                        null => null,
+                      },
+                title: Text(
+                  entry.value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontFamily: 'monospace'),
+                ),
+                subtitle: Row(
+                  children: [
+                    Chip(
+                      label: Text(entry.format, style: const TextStyle(fontSize: 11)),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: GestureDetector(
+                        key: ValueKey('label_${entry.id}'),
+                        onTap: _selectionMode ? () => _toggleSelection(entry.id) : () => _editLabel(entry),
+                        child: Text(
+                          entry.label ?? 'Add label',
+                          overflow: TextOverflow.ellipsis,
+                          style: entry.label == null
+                              ? TextStyle(color: Theme.of(context).colorScheme.outline, fontStyle: FontStyle.italic)
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: _selectionMode
+                    ? null
+                    : GestureDetector(
+                        key: ValueKey('timestamp_${entry.id}'),
+                        onTap: () => setState(() {
+                          if (!_revealedAbsolute.add(entry.id)) {
+                            _revealedAbsolute.remove(entry.id);
+                          }
+                        }),
+                        child: Text(
+                          showAbsolute ? formatAbsoluteDate(entry.scannedAt) : formatRelativeTime(entry.scannedAt),
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+              );
+
+              if (_selectionMode) return tile;
+
+              // Swipe-to-delete only outside selection mode, so the gesture
+              // doesn't fight with tap-to-select.
               return Dismissible(
                 key: ValueKey(entry.id),
                 direction: DismissDirection.endToStart,
-                confirmDismiss: (_) => _confirmDelete(entry),
+                confirmDismiss: (_) => _confirmDelete('"${entry.value}" will be moved to Recently Deleted.'),
                 background: Container(
                   color: Theme.of(context).colorScheme.errorContainer,
                   alignment: Alignment.centerRight,
@@ -177,61 +311,7 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
                   child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onErrorContainer),
                 ),
                 onDismissed: (_) => _deleteWithUndo(entry),
-                child: ListTile(
-                  leading: switch (entry.imagePath) {
-                    final path? => ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: Container(
-                        width: 48,
-                        height: 48,
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        child: Image.file(File(path), fit: BoxFit.contain),
-                      ),
-                    ),
-                    null => null,
-                  },
-                  title: Text(
-                    entry.value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                  subtitle: Row(
-                    children: [
-                      Chip(
-                        label: Text(entry.format, style: const TextStyle(fontSize: 11)),
-                        visualDensity: VisualDensity.compact,
-                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: GestureDetector(
-                          key: ValueKey('label_${entry.id}'),
-                          onTap: () => _editLabel(entry),
-                          child: Text(
-                            entry.label ?? 'Add label',
-                            overflow: TextOverflow.ellipsis,
-                            style: entry.label == null
-                                ? TextStyle(color: Theme.of(context).colorScheme.outline, fontStyle: FontStyle.italic)
-                                : null,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  trailing: GestureDetector(
-                    key: ValueKey('timestamp_${entry.id}'),
-                    onTap: () => setState(() {
-                      if (!_revealedAbsolute.add(entry.id)) {
-                        _revealedAbsolute.remove(entry.id);
-                      }
-                    }),
-                    child: Text(
-                      showAbsolute ? formatAbsoluteDate(entry.scannedAt) : formatRelativeTime(entry.scannedAt),
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ),
+                child: tile,
               );
             },
           );
