@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:sqflite/sqflite.dart';
 
@@ -87,7 +88,31 @@ class SqliteScanRepository implements ScanRepository {
 
   Future<void> _purgeExpired(Database db) async {
     final cutoff = DateTime.now().toUtc().subtract(retentionPeriod).millisecondsSinceEpoch;
+    final expiring = await db.query(
+      _tableName,
+      columns: ['image_path'],
+      where: 'deleted_at IS NOT NULL AND deleted_at < ?',
+      whereArgs: [cutoff],
+    );
     await db.delete(_tableName, where: 'deleted_at IS NOT NULL AND deleted_at < ?', whereArgs: [cutoff]);
+    for (final row in expiring) {
+      await _deleteImageFile(row['image_path'] as String?);
+    }
+  }
+
+  /// Best-effort cleanup — a row's photo has no other owner (each capture
+  /// gets its own generated filename, and duplicates never save a new row),
+  /// so once the row is gone the file should go with it. A failure here
+  /// (already missing, permissions, ...) just leaves a stray file; not
+  /// worth surfacing to the caller.
+  Future<void> _deleteImageFile(String? path) async {
+    if (path == null) return;
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Ignored -- see above.
+    }
   }
 
   @override
@@ -120,13 +145,23 @@ class SqliteScanRepository implements ScanRepository {
   @override
   Future<void> save(ScanEntry entry) async {
     final db = await _open();
-    try {
-      await db.insert(_tableName, _rowFromEntry(entry), conflictAlgorithm: ConflictAlgorithm.replace);
-    } on DatabaseException catch (e) {
-      // Backstop only: callers are expected to check findMostRecentByValue
-      // before saving. If a same-value active row still slipped in
-      // concurrently, silently keep the existing one rather than crash.
-      if (!e.isUniqueConstraintError()) rethrow;
+    // Update-by-id first (label edits, etc. — the row already exists and a
+    // row never conflicts with itself), and only insert if it doesn't.
+    // `ConflictAlgorithm.replace` on a plain insert is *not* safe here: it
+    // resolves conflicts on *any* unique constraint, not just the primary
+    // key, so inserting a genuinely new row that happens to collide with an
+    // unrelated existing row on `value` would silently delete that row and
+    // replace it — exactly the duplicate this app is trying to prevent.
+    final updated = await db.update(_tableName, _rowFromEntry(entry), where: 'id = ?', whereArgs: [entry.id]);
+    if (updated == 0) {
+      try {
+        await db.insert(_tableName, _rowFromEntry(entry), conflictAlgorithm: ConflictAlgorithm.abort);
+      } on DatabaseException catch (e) {
+        // Backstop only: callers are expected to check findMostRecentByValue
+        // before saving. If a same-value active row still slipped in
+        // concurrently, keep the existing one rather than crash.
+        if (!e.isUniqueConstraintError()) rethrow;
+      }
     }
     await _refresh();
   }
@@ -168,7 +203,9 @@ class SqliteScanRepository implements ScanRepository {
   @override
   Future<void> permanentlyDelete(String id) async {
     final db = await _open();
+    final rows = await db.query(_tableName, columns: ['image_path'], where: 'id = ?', whereArgs: [id], limit: 1);
     await db.delete(_tableName, where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) await _deleteImageFile(rows.first['image_path'] as String?);
     await _refreshDeleted();
   }
 
