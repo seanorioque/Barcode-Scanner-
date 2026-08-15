@@ -4,6 +4,7 @@ class BarcodeDetection {
     required this.value,
     required this.format,
     required this.boundingBoxArea,
+    required this.boundingBox,
   });
 
   final String value;
@@ -12,6 +13,26 @@ class BarcodeDetection {
   /// Area (in px^2) of the detection's bounding box within the frame.
   /// Used to pick the largest/most central code when several are visible.
   final double boundingBoxArea;
+
+  /// Where the barcode sits within the analyzed frame, as fractions of the
+  /// frame so it can be re-applied to a differently-sized still photo.
+  final BarcodeBoundingBox boundingBox;
+}
+
+/// A detection's position within its frame, expressed as fractions
+/// (0.0-1.0) of the frame's upright width/height — resolution-independent
+/// so it can be mapped onto a still photo captured at a different size.
+class BarcodeBoundingBox {
+  const BarcodeBoundingBox({required this.left, required this.top, required this.width, required this.height});
+
+  /// Stands in for "the whole frame" — useful for tests that don't care
+  /// about precise cropping.
+  const BarcodeBoundingBox.fullFrame() : left = 0, top = 0, width = 1, height = 1;
+
+  final double left;
+  final double top;
+  final double width;
+  final double height;
 }
 
 /// Why live scanning isn't available right now.
@@ -49,8 +70,9 @@ abstract class BarcodeScannerService {
 
   Future<void> setTorchEnabled(bool enabled);
 
-  /// Captures a photo of the current camera frame and saves it to
-  /// persistent storage, returning its file path. Returns `null` if a
-  /// photo can't be captured.
-  Future<String?> captureImage();
+  /// Captures a photo of the current camera frame, crops it to
+  /// [boundingBox] (with padding), and saves it to persistent storage,
+  /// returning its file path. Returns `null` if a photo can't be captured;
+  /// falls back to the uncropped photo if the crop itself fails.
+  Future<String?> captureImage(BarcodeBoundingBox boundingBox);
 }
