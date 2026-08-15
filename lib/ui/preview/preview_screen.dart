@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../domain/scan_entry.dart';
 import '../capture/scanner_controller.dart';
 import '../format_time.dart';
 
@@ -71,7 +72,12 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.file(File(imagePath), height: 180, width: double.infinity, fit: BoxFit.cover),
+                    child: Container(
+                      height: 180,
+                      width: double.infinity,
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      child: Image.file(File(imagePath), fit: BoxFit.contain),
+                    ),
                   ),
                 ),
               Chip(label: Text(detection.format)),
@@ -86,7 +92,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                 ),
               ),
               if (duplicate != null)
-                _AlreadyScannedBanner(value: detection.value, scannedAt: duplicate.scannedAt)
+                _AlreadyScannedBanner(duplicate: duplicate)
               else
                 TextField(
                   key: const ValueKey('preview_label_field'),
@@ -126,20 +132,24 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   }
 }
 
+/// Non-blocking, informational — this is a normal outcome of scanning, not
+/// an error, so it deliberately avoids error styling/icons and never
+/// requires a dismiss action.
 class _AlreadyScannedBanner extends StatelessWidget {
-  const _AlreadyScannedBanner({required this.value, required this.scannedAt});
+  const _AlreadyScannedBanner({required this.duplicate});
 
-  final String value;
-  final DateTime scannedAt;
+  final ScanEntry duplicate;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final onContainer = colorScheme.onSecondaryContainer;
+    final label = duplicate.label;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colorScheme.errorContainer,
+        color: colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -147,19 +157,24 @@ class _AlreadyScannedBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
+              Icon(Icons.info_outline, color: onContainer),
               const SizedBox(width: 8),
               Text(
-                'Already Scanned',
-                style: TextStyle(color: colorScheme.onErrorContainer, fontWeight: FontWeight.bold, fontSize: 16),
+                'Already scanned',
+                style: TextStyle(color: onContainer, fontWeight: FontWeight.bold, fontSize: 16),
               ),
             ],
           ),
           const SizedBox(height: 8),
           Text(
-            '"$value" was already scanned on ${formatAbsoluteDate(scannedAt)}. It won\'t be saved again.',
-            style: TextStyle(color: colorScheme.onErrorContainer),
+            label ?? 'Add label',
+            style: TextStyle(
+              color: onContainer,
+              fontStyle: label == null ? FontStyle.italic : FontStyle.normal,
+            ),
           ),
+          const SizedBox(height: 4),
+          Text('First scanned ${formatAbsoluteDate(duplicate.scannedAt)}', style: TextStyle(color: onContainer)),
         ],
       ),
     );
