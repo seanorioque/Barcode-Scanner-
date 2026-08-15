@@ -186,4 +186,18 @@ void main() {
     expect(repository.entries, isEmpty);
     expect(container.read(scannerControllerProvider).phase, ScanPhase.idle);
   });
+
+  test('save is a no-op for a duplicate detection', () async {
+    await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 1)));
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    service.emit(const [BarcodeDetection(value: 'dup', format: 'EAN_13', boundingBoxArea: 100)]);
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(scannerControllerProvider).duplicateOf?.id, 'old');
+
+    await notifier.save(label: 'ignored');
+
+    expect(repository.entries, hasLength(1));
+    expect(repository.entries.single.id, 'old');
+  });
 }
