@@ -149,7 +149,7 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
   /// rotated coordinate space (matching the `rotation` given in
   /// [InputImageMetadata]), not the raw sensor-native buffer dimensions.
   Size _uprightFrameSize(int rawWidth, int rawHeight, InputImageRotation rotation) {
-    final swapped = rotation == InputImageRotation.rotation180deg || rotation == InputImageRotation.rotation270deg;
+    final swapped = rotation == InputImageRotation.rotation90deg || rotation == InputImageRotation.rotation270deg;
     return swapped ? Size(rawHeight.toDouble(), rawWidth.toDouble()) : Size(rawWidth.toDouble(), rawHeight.toDouble());
   }
 
