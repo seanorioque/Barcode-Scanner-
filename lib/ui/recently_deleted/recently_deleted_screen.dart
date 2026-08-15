@@ -63,7 +63,12 @@ class RecentlyDeletedScreen extends ConsumerWidget {
                 leading: switch (entry.imagePath) {
                   final path? => ClipRRect(
                     borderRadius: BorderRadius.circular(6),
-                    child: Image.file(File(path), width: 48, height: 48, fit: BoxFit.cover),
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      child: Image.file(File(path), fit: BoxFit.contain),
+                    ),
                   ),
                   null => null,
                 },
