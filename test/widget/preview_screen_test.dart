@@ -73,7 +73,7 @@ void main() {
     expect(find.text('EAN_13'), findsOneWidget);
   });
 
-  testWidgets('shows a duplicate note when the value was scanned before', (tester) async {
+  testWidgets('shows an Already Scanned banner when the value was scanned before', (tester) async {
     final duplicate = ScanEntry(
       id: 'old',
       value: '0123456789012',
@@ -82,26 +82,47 @@ void main() {
     );
     await pumpDetected(tester, duplicate: duplicate);
 
-    expect(find.textContaining('Already scanned on'), findsOneWidget);
+    expect(find.text('Already Scanned'), findsOneWidget);
+    expect(find.textContaining('was already scanned on'), findsOneWidget);
   });
 
-  testWidgets('no duplicate note for a fresh value', (tester) async {
+  testWidgets('no Already Scanned banner for a fresh value', (tester) async {
     await pumpDetected(tester);
 
-    expect(find.textContaining('Already scanned on'), findsNothing);
+    expect(find.text('Already Scanned'), findsNothing);
+  });
+
+  testWidgets('Save is replaced by Done and cannot persist a duplicate', (tester) async {
+    final duplicate = ScanEntry(
+      id: 'old',
+      value: '0123456789012',
+      format: 'EAN_13',
+      scannedAt: DateTime.utc(2026, 1, 1, 9, 30),
+    );
+    await pumpDetected(tester, duplicate: duplicate);
+
+    expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
+    expect(find.widgetWithText(FilledButton, 'Done'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Done'));
+    await tester.pumpAndSettle();
+
+    expect(repository.entries, hasLength(1));
+    expect(repository.entries.single.id, 'old');
+    expect(find.text('open capture'), findsOneWidget);
   });
 
   testWidgets('the label field does not autofocus', (tester) async {
     await pumpDetected(tester);
 
-    final textField = tester.widget<TextField>(find.byType(TextField));
+    final textField = tester.widget<TextField>(find.byKey(const ValueKey('preview_label_field')));
     expect(textField.autofocus, isFalse);
   });
 
   testWidgets('Save persists the entry with its label and returns to the base route', (tester) async {
     await pumpDetected(tester);
 
-    await tester.enterText(find.byType(TextField), 'Pantry');
+    await tester.enterText(find.byKey(const ValueKey('preview_label_field')), 'Pantry');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
     await tester.pumpAndSettle();
 
