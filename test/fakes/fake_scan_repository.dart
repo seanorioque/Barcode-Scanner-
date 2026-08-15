@@ -8,18 +8,34 @@ import 'package:barcode_scanner/domain/scan_repository.dart';
 class FakeScanRepository implements ScanRepository {
   final List<ScanEntry> _entries = [];
   final _controller = StreamController<List<ScanEntry>>.broadcast();
+  final _deletedController = StreamController<List<ScanEntry>>.broadcast();
 
-  List<ScanEntry> get entries => List.unmodifiable(_entries);
+  /// Active (non-deleted) entries.
+  List<ScanEntry> get entries => List.unmodifiable(_entries.where((e) => e.deletedAt == null));
+
+  /// Soft-deleted entries.
+  List<ScanEntry> get deletedEntries => List.unmodifiable(_entries.where((e) => e.deletedAt != null));
 
   void _emit() {
-    final sorted = [..._entries]..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
-    if (!_controller.isClosed) _controller.add(sorted);
+    final active = entries.toList()..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
+    if (!_controller.isClosed) _controller.add(active);
+  }
+
+  void _emitDeleted() {
+    final deleted = deletedEntries.toList()..sort((a, b) => b.deletedAt!.compareTo(a.deletedAt!));
+    if (!_deletedController.isClosed) _deletedController.add(deleted);
   }
 
   @override
   Stream<List<ScanEntry>> watchEntries() {
     scheduleMicrotask(_emit);
     return _controller.stream;
+  }
+
+  @override
+  Stream<List<ScanEntry>> watchDeletedEntries() {
+    scheduleMicrotask(_emitDeleted);
+    return _deletedController.stream;
   }
 
   @override
@@ -30,16 +46,57 @@ class FakeScanRepository implements ScanRepository {
   }
 
   @override
-  Future<void> delete(String id) async {
-    _entries.removeWhere((e) => e.id == id);
+  Future<void> softDelete(String id) async {
+    final index = _entries.indexWhere((e) => e.id == id);
+    if (index == -1) return;
+    _entries[index] = ScanEntry(
+      id: _entries[index].id,
+      value: _entries[index].value,
+      format: _entries[index].format,
+      label: _entries[index].label,
+      imagePath: _entries[index].imagePath,
+      scannedAt: _entries[index].scannedAt,
+      deletedAt: DateTime.now().toUtc(),
+    );
     _emit();
+    _emitDeleted();
+  }
+
+  @override
+  Future<bool> restore(String id) async {
+    final index = _entries.indexWhere((e) => e.id == id);
+    if (index == -1) return false;
+    final entry = _entries[index];
+    final activeDuplicate = _entries.any((e) => e.value == entry.value && e.deletedAt == null && e.id != id);
+    if (activeDuplicate) return false;
+
+    _entries[index] = ScanEntry(
+      id: entry.id,
+      value: entry.value,
+      format: entry.format,
+      label: entry.label,
+      imagePath: entry.imagePath,
+      scannedAt: entry.scannedAt,
+    );
+    _emit();
+    _emitDeleted();
+    return true;
+  }
+
+  @override
+  Future<void> permanentlyDelete(String id) async {
+    _entries.removeWhere((e) => e.id == id);
+    _emitDeleted();
   }
 
   @override
   Future<ScanEntry?> findMostRecentByValue(String value) async {
-    final matches = _entries.where((e) => e.value == value).toList()..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
+    final matches = entries.where((e) => e.value == value).toList()..sort((a, b) => b.scannedAt.compareTo(a.scannedAt));
     return matches.isEmpty ? null : matches.first;
   }
 
-  Future<void> dispose() => _controller.close();
+  Future<void> dispose() async {
+    await _controller.close();
+    await _deletedController.close();
+  }
 }
