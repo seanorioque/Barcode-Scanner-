@@ -70,15 +70,43 @@ void main() {
     expect(service.startCallCount, 0);
   });
 
-  test('a detection moves scanning -> detected and stops the service', () async {
+  test('a fresh detection moves scanning -> detected, captures a photo, and stops the service', () async {
     await container.read(scannerControllerProvider.notifier).start();
 
-    service.emit(const [BarcodeDetection(value: 'abc', format: 'QR_CODE', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     final state = container.read(scannerControllerProvider);
     expect(state.phase, ScanPhase.detected);
     expect(state.detection?.value, 'abc');
+    expect(service.captureImageCallCount, 1);
+    expect(service.stopCallCount, 1);
+  });
+
+  test('a duplicate detection skips capturing a photo and reuses the stored image', () async {
+    await repository.save(
+      ScanEntry(
+        id: 'old',
+        value: 'dup',
+        format: 'CODE_128',
+        imagePath: '/stored/dup.jpg',
+        scannedAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+
+    await container.read(scannerControllerProvider.notifier).start();
+    service.emit(const [
+      BarcodeDetection(value: 'dup', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
+    await Future<void>.delayed(Duration.zero);
+
+    final state = container.read(scannerControllerProvider);
+    expect(state.phase, ScanPhase.detected);
+    expect(state.duplicateOf?.id, 'old');
+    expect(state.imagePath, '/stored/dup.jpg');
+    expect(service.captureImageCallCount, 0);
     expect(service.stopCallCount, 1);
   });
 
@@ -86,8 +114,8 @@ void main() {
     await container.read(scannerControllerProvider.notifier).start();
 
     service.emit(const [
-      BarcodeDetection(value: 'small', format: 'QR_CODE', boundingBoxArea: 10),
-      BarcodeDetection(value: 'big', format: 'QR_CODE', boundingBoxArea: 900),
+      BarcodeDetection(value: 'small', format: 'CODE_128', boundingBoxArea: 10, boundingBox: BarcodeBoundingBox.fullFrame()),
+      BarcodeDetection(value: 'big', format: 'CODE_128', boundingBoxArea: 900, boundingBox: BarcodeBoundingBox.fullFrame()),
     ]);
     await Future<void>.delayed(Duration.zero);
 
@@ -97,20 +125,25 @@ void main() {
   test('frames are ignored once a code has been detected', () async {
     await container.read(scannerControllerProvider.notifier).start();
 
-    service.emit(const [BarcodeDetection(value: 'first', format: 'QR_CODE', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'first', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
-    service.emit(const [BarcodeDetection(value: 'second', format: 'QR_CODE', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'second', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     expect(container.read(scannerControllerProvider).detection?.value, 'first');
   });
 
   test('duplicate values are surfaced from the repository', () async {
-    await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1)));
+    await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1)));
 
     await container.read(scannerControllerProvider.notifier).start();
-    service.emit(const [BarcodeDetection(value: 'dup', format: 'QR_CODE', boundingBoxArea: 100)]);
-    await Future<void>.delayed(Duration.zero);
+    service.emit(const [
+      BarcodeDetection(value: 'dup', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     expect(container.read(scannerControllerProvider).duplicateOf?.id, 'old');
@@ -118,19 +151,21 @@ void main() {
 
   test('a fresh value has no duplicate note', () async {
     await container.read(scannerControllerProvider.notifier).start();
-    service.emit(const [BarcodeDetection(value: 'fresh', format: 'QR_CODE', boundingBoxArea: 100)]);
-    await Future<void>.delayed(Duration.zero);
+    service.emit(const [
+      BarcodeDetection(value: 'fresh', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     expect(container.read(scannerControllerProvider).duplicateOf, isNull);
   });
 
   test('rescan clears the detection, duplicate note, and returns to scanning', () async {
-    await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1)));
+    await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1)));
     final notifier = container.read(scannerControllerProvider.notifier);
     await notifier.start();
-    service.emit(const [BarcodeDetection(value: 'dup', format: 'QR_CODE', boundingBoxArea: 100)]);
-    await Future<void>.delayed(Duration.zero);
+    service.emit(const [
+      BarcodeDetection(value: 'dup', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     await notifier.rescan();
@@ -144,7 +179,9 @@ void main() {
   test('rescan does not persist anything', () async {
     final notifier = container.read(scannerControllerProvider.notifier);
     await notifier.start();
-    service.emit(const [BarcodeDetection(value: 'abc', format: 'QR_CODE', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'CODE_128', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     await notifier.rescan();
@@ -155,7 +192,9 @@ void main() {
   test('save persists the entry and returns to idle', () async {
     final notifier = container.read(scannerControllerProvider.notifier);
     await notifier.start();
-    service.emit(const [BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     await notifier.save(label: 'Groceries');
@@ -171,7 +210,9 @@ void main() {
   test('save with a blank label stores null', () async {
     final notifier = container.read(scannerControllerProvider.notifier);
     await notifier.start();
-    service.emit(const [BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'abc', format: 'EAN_13', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
 
     await notifier.save(label: '   ');
@@ -191,7 +232,9 @@ void main() {
     await repository.save(ScanEntry(id: 'old', value: 'dup', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 1)));
     final notifier = container.read(scannerControllerProvider.notifier);
     await notifier.start();
-    service.emit(const [BarcodeDetection(value: 'dup', format: 'EAN_13', boundingBoxArea: 100)]);
+    service.emit(const [
+      BarcodeDetection(value: 'dup', format: 'EAN_13', boundingBoxArea: 100, boundingBox: BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
     expect(container.read(scannerControllerProvider).duplicateOf?.id, 'old');
 
