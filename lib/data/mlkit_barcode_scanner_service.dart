@@ -5,11 +5,16 @@ import 'dart:ui' show Size;
 
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../domain/barcode_scanner_service.dart';
+
+/// Fraction of the detected barcode's own width/height added as padding on
+/// each side when cropping, so the quiet zone / edges aren't clipped.
+const _cropPadding = 0.25;
 
 /// Formats the detector accepts. 1D only — narrowing the list (rather than
 /// "all formats") also measurably improves latency and reduces misreads.
@@ -108,10 +113,12 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
     try {
       final controller = _controller;
       if (controller == null) return;
-      final inputImage = _toInputImage(image, controller.description);
+      final rotation = _rotationFor(controller.description);
+      final inputImage = _toInputImage(image, rotation);
       if (inputImage == null) return;
       final barcodes = await _barcodeScanner.processImage(inputImage);
       if (!_analyzing || _detectionsController.isClosed) return;
+      final uprightSize = _uprightFrameSize(image.width, image.height, rotation);
       final detections = barcodes
           .where((b) => b.rawValue != null)
           .map(
@@ -119,6 +126,12 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
               value: b.rawValue!,
               format: b.format.name,
               boundingBoxArea: b.boundingBox.width * b.boundingBox.height,
+              boundingBox: BarcodeBoundingBox(
+                left: (b.boundingBox.left / uprightSize.width).clamp(0.0, 1.0),
+                top: (b.boundingBox.top / uprightSize.height).clamp(0.0, 1.0),
+                width: (b.boundingBox.width / uprightSize.width).clamp(0.0, 1.0),
+                height: (b.boundingBox.height / uprightSize.height).clamp(0.0, 1.0),
+              ),
             ),
           )
           .toList(growable: false);
@@ -128,9 +141,19 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
     }
   }
 
-  InputImage? _toInputImage(CameraImage image, CameraDescription description) {
-    final rotation = InputImageRotationValue.fromRawValue(description.sensorOrientation) ?? InputImageRotation.rotation0deg;
+  InputImageRotation _rotationFor(CameraDescription description) =>
+      InputImageRotationValue.fromRawValue(description.sensorOrientation) ?? InputImageRotation.rotation0deg;
 
+  /// The frame's dimensions as a person would see it upright, i.e. with a
+  /// 90°/270° rotation applied. ML Kit returns `Barcode.boundingBox` in this
+  /// rotated coordinate space (matching the `rotation` given in
+  /// [InputImageMetadata]), not the raw sensor-native buffer dimensions.
+  Size _uprightFrameSize(int rawWidth, int rawHeight, InputImageRotation rotation) {
+    final swapped = rotation == InputImageRotation.rotation180deg || rotation == InputImageRotation.rotation270deg;
+    return swapped ? Size(rawHeight.toDouble(), rawWidth.toDouble()) : Size(rawWidth.toDouble(), rawHeight.toDouble());
+  }
+
+  InputImage? _toInputImage(CameraImage image, InputImageRotation rotation) {
     if (Platform.isIOS) {
       final plane = image.planes.first;
       return InputImage.fromBytes(
@@ -196,10 +219,12 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
   }
 
   /// Stops frame analysis (a capture request can't share the camera with an
-  /// active image stream) and takes a full-resolution photo, copying it out
-  /// of the plugin's temp file into a durable app-storage location.
+  /// active image stream), takes a full-resolution photo, crops it to
+  /// [boundingBox] (falling back to the uncropped photo if cropping fails
+  /// for any reason), and saves the result to a durable app-storage
+  /// location.
   @override
-  Future<String?> captureImage() async {
+  Future<String?> captureImage(BarcodeBoundingBox boundingBox) async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return null;
     try {
@@ -207,13 +232,46 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
         await controller.stopImageStream();
       }
       final picture = await controller.takePicture();
+      final originalBytes = await File(picture.path).readAsBytes();
+      final bytesToSave = _cropToBarcode(originalBytes, boundingBox) ?? originalBytes;
+
       final documentsDir = await getApplicationDocumentsDirectory();
       final imagesDir = Directory(p.join(documentsDir.path, 'scan_images'));
       await imagesDir.create(recursive: true);
       final destination = p.join(imagesDir.path, '${DateTime.now().microsecondsSinceEpoch}.jpg');
-      await File(picture.path).copy(destination);
+      await File(destination).writeAsBytes(bytesToSave);
       return destination;
     } on CameraException {
+      return null;
+    }
+  }
+
+  /// Crops [jpegBytes] to [boundingBox] (expanded by [_cropPadding] on each
+  /// side, clamped to the image), re-encoding as JPEG. Returns `null` on any
+  /// failure — decode error, or a degenerate/zero-size crop rect — so the
+  /// caller can fall back to the uncropped photo rather than save a broken
+  /// or empty image.
+  Uint8List? _cropToBarcode(Uint8List jpegBytes, BarcodeBoundingBox boundingBox) {
+    try {
+      final decoded = img.decodeImage(jpegBytes);
+      if (decoded == null) return null;
+      final upright = img.bakeOrientation(decoded);
+
+      final w = upright.width;
+      final h = upright.height;
+      final padX = boundingBox.width * _cropPadding;
+      final padY = boundingBox.height * _cropPadding;
+      final left = ((boundingBox.left - padX) * w).clamp(0, w).round();
+      final top = ((boundingBox.top - padY) * h).clamp(0, h).round();
+      final right = ((boundingBox.left + boundingBox.width + padX) * w).clamp(0, w).round();
+      final bottom = ((boundingBox.top + boundingBox.height + padY) * h).clamp(0, h).round();
+      final cropWidth = right - left;
+      final cropHeight = bottom - top;
+      if (cropWidth <= 0 || cropHeight <= 0) return null;
+
+      final cropped = img.copyCrop(upright, x: left, y: top, width: cropWidth, height: cropHeight);
+      return Uint8List.fromList(img.encodeJpg(cropped, quality: 90));
+    } catch (_) {
       return null;
     }
   }
