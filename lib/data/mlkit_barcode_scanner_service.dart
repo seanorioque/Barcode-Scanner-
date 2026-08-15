@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../domain/barcode_crop.dart';
 import '../domain/barcode_scanner_service.dart';
 
 /// Fraction of the detected barcode's own width/height added as padding on
@@ -118,7 +119,7 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
       if (inputImage == null) return;
       final barcodes = await _barcodeScanner.processImage(inputImage);
       if (!_analyzing || _detectionsController.isClosed) return;
-      final uprightSize = _uprightFrameSize(image.width, image.height, rotation);
+      final rotationDegrees = _rotationDegrees(rotation);
       final detections = barcodes
           .where((b) => b.rawValue != null)
           .map(
@@ -126,11 +127,14 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
               value: b.rawValue!,
               format: b.format.name,
               boundingBoxArea: b.boundingBox.width * b.boundingBox.height,
-              boundingBox: BarcodeBoundingBox(
-                left: (b.boundingBox.left / uprightSize.width).clamp(0.0, 1.0),
-                top: (b.boundingBox.top / uprightSize.height).clamp(0.0, 1.0),
-                width: (b.boundingBox.width / uprightSize.width).clamp(0.0, 1.0),
-                height: (b.boundingBox.height / uprightSize.height).clamp(0.0, 1.0),
+              boundingBox: toFractionalBoundingBox(
+                left: b.boundingBox.left,
+                top: b.boundingBox.top,
+                width: b.boundingBox.width,
+                height: b.boundingBox.height,
+                rawFrameWidth: image.width,
+                rawFrameHeight: image.height,
+                rotationDegrees: rotationDegrees,
               ),
             ),
           )
@@ -144,14 +148,12 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
   InputImageRotation _rotationFor(CameraDescription description) =>
       InputImageRotationValue.fromRawValue(description.sensorOrientation) ?? InputImageRotation.rotation0deg;
 
-  /// The frame's dimensions as a person would see it upright, i.e. with a
-  /// 90°/270° rotation applied. ML Kit returns `Barcode.boundingBox` in this
-  /// rotated coordinate space (matching the `rotation` given in
-  /// [InputImageMetadata]), not the raw sensor-native buffer dimensions.
-  Size _uprightFrameSize(int rawWidth, int rawHeight, InputImageRotation rotation) {
-    final swapped = rotation == InputImageRotation.rotation90deg || rotation == InputImageRotation.rotation270deg;
-    return swapped ? Size(rawHeight.toDouble(), rawWidth.toDouble()) : Size(rawWidth.toDouble(), rawHeight.toDouble());
-  }
+  int _rotationDegrees(InputImageRotation rotation) => switch (rotation) {
+    InputImageRotation.rotation90deg => 90,
+    InputImageRotation.rotation180deg => 180,
+    InputImageRotation.rotation270deg => 270,
+    InputImageRotation.rotation0deg => 0,
+  };
 
   InputImage? _toInputImage(CameraImage image, InputImageRotation rotation) {
     if (Platform.isIOS) {
@@ -257,19 +259,15 @@ class MlKitBarcodeScannerService implements BarcodeScannerService {
       if (decoded == null) return null;
       final upright = img.bakeOrientation(decoded);
 
-      final w = upright.width;
-      final h = upright.height;
-      final padX = boundingBox.width * _cropPadding;
-      final padY = boundingBox.height * _cropPadding;
-      final left = ((boundingBox.left - padX) * w).clamp(0, w).round();
-      final top = ((boundingBox.top - padY) * h).clamp(0, h).round();
-      final right = ((boundingBox.left + boundingBox.width + padX) * w).clamp(0, w).round();
-      final bottom = ((boundingBox.top + boundingBox.height + padY) * h).clamp(0, h).round();
-      final cropWidth = right - left;
-      final cropHeight = bottom - top;
-      if (cropWidth <= 0 || cropHeight <= 0) return null;
+      final rect = computeCropRect(
+        boundingBox: boundingBox,
+        imageWidth: upright.width,
+        imageHeight: upright.height,
+        padding: _cropPadding,
+      );
+      if (rect == null) return null;
 
-      final cropped = img.copyCrop(upright, x: left, y: top, width: cropWidth, height: cropHeight);
+      final cropped = img.copyCrop(upright, x: rect.left, y: rect.top, width: rect.width, height: rect.height);
       return Uint8List.fromList(img.encodeJpg(cropped, quality: 90));
     } catch (_) {
       return null;
