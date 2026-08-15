@@ -45,7 +45,7 @@ class FakeBarcodeScannerService implements BarcodeScannerService {
   }
 
   @override
-  Future<String?> captureImage() async {
+  Future<String?> captureImage(BarcodeBoundingBox boundingBox) async {
     captureImageCallCount++;
     return imageToCapture;
   }
