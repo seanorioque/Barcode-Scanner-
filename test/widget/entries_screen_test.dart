@@ -89,4 +89,62 @@ void main() {
 
     expect(find.text('3h ago'), findsOneWidget);
   });
+
+  testWidgets('tapping the label opens an editable dialog and saves the new label', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    expect(find.text('Add label'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('label_1')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Edit label'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Pantry');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pantry'), findsOneWidget);
+    expect(repository.entries.single.label, 'Pantry');
+  });
+
+  testWidgets('clearing the label field removes the label', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [
+        ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+      ],
+    );
+
+    expect(find.text('Pantry'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('label_1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '');
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add label'), findsOneWidget);
+    expect(repository.entries.single.label, isNull);
+  });
+
+  testWidgets('Cancel in the label dialog leaves the label unchanged', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [
+        ScanEntry(id: '1', value: 'AAA111', format: 'QR_CODE', label: 'Pantry', scannedAt: DateTime.utc(2026, 1, 1)),
+      ],
+    );
+
+    await tester.tap(find.byKey(const ValueKey('label_1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Ignored');
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pantry'), findsOneWidget);
+    expect(repository.entries.single.label, 'Pantry');
+  });
 }

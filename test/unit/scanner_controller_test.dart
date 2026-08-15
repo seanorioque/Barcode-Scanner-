@@ -48,6 +48,28 @@ void main() {
     expect(state.unavailableReason, ScannerUnavailableReason.permissionDenied);
   });
 
+  test('resumeFromBackground retries from unavailable (e.g. returning from system settings)', () async {
+    service.startResult = const ScannerStartResult.unavailable(ScannerUnavailableReason.permissionPermanentlyDenied);
+    final notifier = container.read(scannerControllerProvider.notifier);
+    await notifier.start();
+    expect(container.read(scannerControllerProvider).phase, ScanPhase.unavailable);
+
+    service.startResult = const ScannerStartResult.ready();
+    await notifier.resumeFromBackground();
+
+    expect(container.read(scannerControllerProvider).phase, ScanPhase.scanning);
+  });
+
+  test('resumeFromBackground is a no-op from detected/saving/idle', () async {
+    final notifier = container.read(scannerControllerProvider.notifier);
+    expect(container.read(scannerControllerProvider).phase, ScanPhase.idle);
+
+    await notifier.resumeFromBackground();
+
+    expect(container.read(scannerControllerProvider).phase, ScanPhase.idle);
+    expect(service.startCallCount, 0);
+  });
+
   test('a detection moves scanning -> detected and stops the service', () async {
     await container.read(scannerControllerProvider.notifier).start();
 

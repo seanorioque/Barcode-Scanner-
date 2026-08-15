@@ -36,6 +36,18 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
     );
   }
 
+  Future<void> _editLabel(ScanEntry entry) async {
+    final newLabel = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => _EditLabelDialog(initialLabel: entry.label ?? ''),
+    );
+    if (newLabel == null) return;
+
+    final trimmed = newLabel.trim();
+    final repository = ref.read(scanRepositoryProvider);
+    await repository.save(trimmed.isEmpty ? entry.copyWith(clearLabel: true) : entry.copyWith(label: trimmed));
+  }
+
   @override
   Widget build(BuildContext context) {
     final entriesAsync = ref.watch(entriesProvider);
@@ -85,7 +97,19 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
                         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
                       const SizedBox(width: 8),
-                      if (entry.label != null) Expanded(child: Text(entry.label!, overflow: TextOverflow.ellipsis)),
+                      Expanded(
+                        child: GestureDetector(
+                          key: ValueKey('label_${entry.id}'),
+                          onTap: () => _editLabel(entry),
+                          child: Text(
+                            entry.label ?? 'Add label',
+                            overflow: TextOverflow.ellipsis,
+                            style: entry.label == null
+                                ? TextStyle(color: Theme.of(context).colorScheme.outline, fontStyle: FontStyle.italic)
+                                : null,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   trailing: GestureDetector(
@@ -106,6 +130,42 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+class _EditLabelDialog extends StatefulWidget {
+  const _EditLabelDialog({required this.initialLabel});
+
+  final String initialLabel;
+
+  @override
+  State<_EditLabelDialog> createState() => _EditLabelDialogState();
+}
+
+class _EditLabelDialogState extends State<_EditLabelDialog> {
+  late final _controller = TextEditingController(text: widget.initialLabel);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Edit label'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Label', border: OutlineInputBorder()),
+        onSubmitted: (value) => Navigator.of(context).pop(value),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.of(context).pop(_controller.text), child: const Text('Save')),
+      ],
     );
   }
 }

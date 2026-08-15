@@ -138,8 +138,13 @@ class ScannerController extends Notifier<ScannerState> {
     await _service.stop();
   }
 
+  /// Retries from `scanning` (camera was paused for the background trip)
+  /// and from `unavailable` (e.g. the user backgrounded the app to grant
+  /// camera permission from system settings and is now returning).
+  /// `detected`/`saving` are left alone — there's an active preview to not
+  /// disturb.
   Future<void> resumeFromBackground() async {
-    if (state.phase != ScanPhase.scanning) return;
+    if (state.phase != ScanPhase.scanning && state.phase != ScanPhase.unavailable) return;
     await start();
   }
 

@@ -14,13 +14,16 @@ class ScanEntry {
   final String? label;
   final DateTime scannedAt;
 
-  ScanEntry copyWith({String? label}) {
+  /// Pass [label] to set it, or [clearLabel] to explicitly reset it to
+  /// `null` (plain `label: null` would otherwise be indistinguishable from
+  /// "leave unchanged").
+  ScanEntry copyWith({String? label, bool clearLabel = false}) {
     return ScanEntry(
       id: id,
       value: value,
       format: format,
       scannedAt: scannedAt,
-      label: label ?? this.label,
+      label: clearLabel ? null : (label ?? this.label),
     );
   }
 }
