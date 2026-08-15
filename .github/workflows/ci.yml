@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          # Matches the Flutter stable release that ships the Dart SDK
+          # pubspec.yaml's environment.sdk (^3.12.2) constrains against.
+          flutter-version: '3.44.9'
+      - run: flutter pub get
+      - run: flutter analyze --fatal-infos
+      - run: flutter test
+        # integration_test/ needs a connected device/emulator and is
+        # deliberately not run here.
+
+  android-debug-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          flutter-version: '3.44.9'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - run: flutter pub get
+      - run: flutter build apk --debug
+        # Catches regressions like the compileSdk/permission_handler
+        # preview-SDK break documented in requirements.md ambiguity log.
