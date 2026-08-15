@@ -22,6 +22,7 @@ void main() {
     String value = '0123456789012',
     String format = 'EAN_13',
     String? label,
+    String? imagePath,
     DateTime? scannedAt,
   }) {
     return ScanEntry(
@@ -29,6 +30,7 @@ void main() {
       value: value,
       format: format,
       label: label,
+      imagePath: imagePath,
       scannedAt: scannedAt ?? DateTime.utc(2026, 1, 1),
     );
   }
@@ -45,9 +47,9 @@ void main() {
   });
 
   test('entries are ordered most-recent-first', () async {
-    await repository.save(makeEntry(id: '1', scannedAt: DateTime.utc(2026, 1, 1)));
-    await repository.save(makeEntry(id: '2', scannedAt: DateTime.utc(2026, 1, 3)));
-    await repository.save(makeEntry(id: '3', scannedAt: DateTime.utc(2026, 1, 2)));
+    await repository.save(makeEntry(id: '1', value: 'a', scannedAt: DateTime.utc(2026, 1, 1)));
+    await repository.save(makeEntry(id: '2', value: 'b', scannedAt: DateTime.utc(2026, 1, 3)));
+    await repository.save(makeEntry(id: '3', value: 'c', scannedAt: DateTime.utc(2026, 1, 2)));
 
     final entries = await repository.watchEntries().first;
     expect(entries.map((e) => e.id).toList(), ['2', '3', '1']);
@@ -103,6 +105,29 @@ void main() {
     expect(await repository.watchDeletedEntries().first, isEmpty);
   });
 
+  test('permanentlyDelete also removes the entry\'s image file from disk', () async {
+    final imagePath = p.join(Directory.systemTemp.path, 'image_test_${DateTime.now().microsecondsSinceEpoch}.jpg');
+    await File(imagePath).writeAsBytes([0]);
+    addTearDown(() async {
+      if (await File(imagePath).exists()) await File(imagePath).delete();
+    });
+
+    await repository.save(makeEntry(id: '1', imagePath: imagePath));
+    await repository.softDelete('1');
+    expect(await File(imagePath).exists(), isTrue);
+
+    await repository.permanentlyDelete('1');
+
+    expect(await File(imagePath).exists(), isFalse);
+  });
+
+  test('permanentlyDelete does not error when the entry has no image', () async {
+    await repository.save(makeEntry(id: '1'));
+    await repository.softDelete('1');
+
+    await expectLater(repository.permanentlyDelete('1'), completes);
+  });
+
   test('watchDeletedEntries orders most-recently-deleted first', () async {
     await repository.save(makeEntry(id: '1', value: 'a'));
     await repository.save(makeEntry(id: '2', value: 'b'));
@@ -148,10 +173,18 @@ void main() {
     expect(entries.single.scannedAt, scannedAt);
   });
 
-  test('deleted entries older than the retention period are purged', () async {
+  test('deleted entries older than the retention period are purged, image file included', () async {
     final path = p.join(Directory.systemTemp.path, 'retention_test_${DateTime.now().microsecondsSinceEpoch}.db');
     addTearDown(() async {
       if (await File(path).exists()) await File(path).delete();
+    });
+    final imagePath = p.join(
+      Directory.systemTemp.path,
+      'retention_image_test_${DateTime.now().microsecondsSinceEpoch}.jpg',
+    );
+    await File(imagePath).writeAsBytes([0]);
+    addTearDown(() async {
+      if (await File(imagePath).exists()) await File(imagePath).delete();
     });
 
     final repo = SqliteScanRepository(
@@ -161,17 +194,21 @@ void main() {
     );
     addTearDown(repo.close);
 
-    await repo.save(makeEntry(id: '1'));
+    await repo.save(makeEntry(id: '1', imagePath: imagePath));
     await repo.softDelete('1');
 
     // Back-date deleted_at via a second connection to the same file,
     // simulating time passing without a production clock-injection seam.
-    final raw = await databaseFactoryFfi.openDatabase(path);
+    // `singleInstance: false` is required here -- sqflite otherwise caches
+    // and returns `repo`'s own connection for a path that's already open,
+    // so closing "raw" below would silently close `repo`'s connection too.
+    final raw = await databaseFactoryFfi.openDatabase(path, options: OpenDatabaseOptions(singleInstance: false));
     final beyondRetention = DateTime.now().toUtc().subtract(const Duration(days: 31)).millisecondsSinceEpoch;
     await raw.update('scan_entries', {'deleted_at': beyondRetention}, where: "id = '1'");
     await raw.close();
 
     expect(await repo.watchDeletedEntries().first, isEmpty);
+    expect(await File(imagePath).exists(), isFalse);
   });
 
   test('migrating from v2 deduplicates active rows sharing a value', () async {
@@ -208,7 +245,14 @@ void main() {
     });
     await oldDb.close();
 
-    final migrated = SqliteScanRepository(databaseFactory: databaseFactoryFfi, path: path);
+    // A long retention period -- this test is about migration/dedup, not
+    // retention, and the fixed 2026-01-01 seed date would otherwise be
+    // purged as "expired" by the default 30-day window.
+    final migrated = SqliteScanRepository(
+      databaseFactory: databaseFactoryFfi,
+      path: path,
+      retentionPeriod: const Duration(days: 3650),
+    );
     addTearDown(migrated.close);
 
     final active = await migrated.watchEntries().first;
