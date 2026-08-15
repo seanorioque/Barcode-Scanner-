@@ -41,6 +41,10 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
+  void _done() {
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(scannerControllerProvider);
@@ -52,6 +56,7 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     }
 
     final saving = state.phase == ScanPhase.saving;
+    final duplicate = state.duplicateOf;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Preview & confirm')),
@@ -80,21 +85,16 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                   label: const Text('Copy'),
                 ),
               ),
-              if (state.duplicateOf case final duplicate?)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    'Already scanned on ${formatAbsoluteDate(duplicate.scannedAt)}',
-                    style: TextStyle(color: Theme.of(context).colorScheme.secondary),
-                  ),
+              if (duplicate != null)
+                _AlreadyScannedBanner(value: detection.value, scannedAt: duplicate.scannedAt)
+              else
+                TextField(
+                  key: const ValueKey('preview_label_field'),
+                  controller: _labelController,
+                  autofocus: false,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(labelText: 'Label (optional)', border: OutlineInputBorder()),
                 ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _labelController,
-                autofocus: false,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(labelText: 'Label (optional)', border: OutlineInputBorder()),
-              ),
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -103,22 +103,64 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: FilledButton(
-                      onPressed: saving ? null : _save,
-                      child: saving
-                          ? const SizedBox(
-                              height: 16,
-                              width: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : const Text('Save'),
-                    ),
+                    child: duplicate != null
+                        ? FilledButton(onPressed: _done, child: const Text('Done'))
+                        : FilledButton(
+                            onPressed: saving ? null : _save,
+                            child: saving
+                                ? const SizedBox(
+                                    height: 16,
+                                    width: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                  )
+                                : const Text('Save'),
+                          ),
                   ),
                 ],
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AlreadyScannedBanner extends StatelessWidget {
+  const _AlreadyScannedBanner({required this.value, required this.scannedAt});
+
+  final String value;
+  final DateTime scannedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.error_outline, color: colorScheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Text(
+                'Already Scanned',
+                style: TextStyle(color: colorScheme.onErrorContainer, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '"$value" was already scanned on ${formatAbsoluteDate(scannedAt)}. It won\'t be saved again.',
+            style: TextStyle(color: colorScheme.onErrorContainer),
+          ),
+        ],
       ),
     );
   }
