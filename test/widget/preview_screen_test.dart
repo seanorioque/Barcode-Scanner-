@@ -40,7 +40,9 @@ void main() {
     container.listen(scannerControllerProvider, (_, _) {});
 
     await container.read(scannerControllerProvider.notifier).start();
-    service.emit([BarcodeDetection(value: value, format: format, boundingBoxArea: 100)]);
+    service.emit([
+      BarcodeDetection(value: value, format: format, boundingBoxArea: 100, boundingBox: const BarcodeBoundingBox.fullFrame()),
+    ]);
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero); // let the duplicate lookup resolve
 
@@ -73,7 +75,24 @@ void main() {
     expect(find.text('EAN_13'), findsOneWidget);
   });
 
-  testWidgets('shows an Already Scanned banner when the value was scanned before', (tester) async {
+  testWidgets('shows an Already scanned banner with the existing label when the value was scanned before', (
+    tester,
+  ) async {
+    final duplicate = ScanEntry(
+      id: 'old',
+      value: '0123456789012',
+      format: 'EAN_13',
+      label: 'Pantry',
+      scannedAt: DateTime.utc(2026, 1, 1, 9, 30),
+    );
+    await pumpDetected(tester, duplicate: duplicate);
+
+    expect(find.text('Already scanned'), findsOneWidget);
+    expect(find.text('Pantry'), findsOneWidget);
+    expect(find.textContaining('First scanned'), findsOneWidget);
+  });
+
+  testWidgets('shows Add label when the existing entry has no label', (tester) async {
     final duplicate = ScanEntry(
       id: 'old',
       value: '0123456789012',
@@ -82,14 +101,14 @@ void main() {
     );
     await pumpDetected(tester, duplicate: duplicate);
 
-    expect(find.text('Already Scanned'), findsOneWidget);
-    expect(find.textContaining('was already scanned on'), findsOneWidget);
+    expect(find.text('Already scanned'), findsOneWidget);
+    expect(find.text('Add label'), findsOneWidget);
   });
 
-  testWidgets('no Already Scanned banner for a fresh value', (tester) async {
+  testWidgets('no Already scanned banner for a fresh value', (tester) async {
     await pumpDetected(tester);
 
-    expect(find.text('Already Scanned'), findsNothing);
+    expect(find.text('Already scanned'), findsNothing);
   });
 
   testWidgets('Save is replaced by Done and cannot persist a duplicate', (tester) async {
