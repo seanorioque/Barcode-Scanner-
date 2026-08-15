@@ -41,7 +41,11 @@ dependencies:
   image: ^4.3.0
   camera: ^0.12.0+2
   google_mlkit_barcode_scanning: ^0.15.0
-  permission_handler: 11.4.0
+  # Capped below 13.0.0: permission_handler_android >=14.0.0 (pulled in by
+  # permission_handler >=13.0.0) hardcodes Android compileSdk = 37, a
+  # preview-only SDK level — see the comment on compileSdk in
+  # android/app/build.gradle.kts.
+  permission_handler: ^12.0.3
   uuid: ^4.6.0
 
 dev_dependencies:
