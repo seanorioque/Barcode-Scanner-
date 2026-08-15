@@ -160,11 +160,15 @@ class _ScanOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cutoutSize = size.shortestSide * 0.7;
+    // A wide horizontal rectangle, not a square — this app scans 1D
+    // barcodes, not QR/2D codes, so the guide should read as "line up the
+    // barcode" rather than "line up a square code".
+    final cutoutWidth = size.width * 0.85;
+    final cutoutHeight = (cutoutWidth / 3.0).clamp(60.0, size.height * 0.35);
     final cutoutRect = Rect.fromCenter(
       center: Offset(size.width / 2, size.height / 2),
-      width: cutoutSize,
-      height: cutoutSize,
+      width: cutoutWidth,
+      height: cutoutHeight,
     );
     final cutoutRRect = RRect.fromRectAndRadius(cutoutRect, const Radius.circular(16));
 
