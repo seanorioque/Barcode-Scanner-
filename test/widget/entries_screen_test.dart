@@ -209,4 +209,103 @@ void main() {
     expect(find.text('Pantry'), findsOneWidget);
     expect(repository.entries.single.label, 'Pantry');
   });
+
+  testWidgets('long-pressing an entry enters selection mode and shows a checkbox', (tester) async {
+    await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.longPress(find.text('AAA111'));
+    await tester.pump();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(find.byType(Checkbox), findsOneWidget);
+  });
+
+  testWidgets('tapping other entries while selecting adds them, and Delete removes all selected with Undo', (
+    tester,
+  ) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [
+        ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1)),
+        ScanEntry(id: '2', value: 'BBB222', format: 'EAN_13', scannedAt: DateTime.utc(2026, 1, 5)),
+      ],
+    );
+
+    await tester.longPress(find.text('AAA111'));
+    await tester.pump();
+    await tester.tap(find.text('BBB222'));
+    await tester.pump();
+
+    expect(find.text('2 selected'), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.delete));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete this scan?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('AAA111'), findsNothing);
+    expect(find.text('BBB222'), findsNothing);
+    expect(repository.entries, isEmpty);
+    expect(repository.deletedEntries, hasLength(2));
+    // Selection mode exits automatically once the delete completes.
+    expect(find.text('Captured entries'), findsOneWidget);
+
+    await tester.tap(find.text('Undo'));
+    await tester.pumpAndSettle();
+
+    expect(repository.entries, hasLength(2));
+    expect(repository.deletedEntries, isEmpty);
+  });
+
+  testWidgets('Cancel in the bulk-delete confirmation keeps the entries and selection', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.longPress(find.text('AAA111'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.delete));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 selected'), findsOneWidget);
+    expect(repository.entries, hasLength(1));
+  });
+
+  testWidgets('the close icon exits selection mode without deleting anything', (tester) async {
+    final repository = await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.longPress(find.text('AAA111'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.close));
+    await tester.pump();
+
+    expect(find.text('Captured entries'), findsOneWidget);
+    expect(repository.entries, hasLength(1));
+  });
+
+  testWidgets('the delete Undo snackbar lasts exactly 5 seconds', (tester) async {
+    await pumpEntries(
+      tester,
+      seed: [ScanEntry(id: '1', value: 'AAA111', format: 'CODE_128', scannedAt: DateTime.utc(2026, 1, 1))],
+    );
+
+    await tester.drag(find.text('AAA111'), const Offset(-500, 0));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+    await tester.pumpAndSettle();
+
+    final snackBar = tester.widget<SnackBar>(find.byType(SnackBar));
+    expect(snackBar.duration, const Duration(seconds: 5));
+  });
 }
