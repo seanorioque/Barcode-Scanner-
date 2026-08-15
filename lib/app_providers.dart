@@ -12,10 +12,16 @@ final scanRepositoryProvider = Provider<ScanRepository>((ref) {
   throw UnimplementedError('scanRepositoryProvider must be overridden in main()');
 });
 
-/// The live, most-recent-first list of captured entries.
+/// The live, most-recent-first list of active captured entries.
 final entriesProvider = StreamProvider<List<ScanEntry>>((ref) {
   final repository = ref.watch(scanRepositoryProvider);
   return repository.watchEntries();
+});
+
+/// The live, most-recently-deleted-first list of entries in Recently Deleted.
+final deletedEntriesProvider = StreamProvider<List<ScanEntry>>((ref) {
+  final repository = ref.watch(scanRepositoryProvider);
+  return repository.watchDeletedEntries();
 });
 
 /// A fresh scanner service per capture session. Disposed automatically
