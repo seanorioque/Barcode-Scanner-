@@ -14,6 +14,30 @@ void main() {
   late FakeBarcodeScannerService service;
   late FakeScanRepository repository;
 
+  /// A bounded alternative to `pumpAndSettle()` for the Save flow.
+  /// `pumpAndSettle()` can never return while `ScanPhase.saving`'s
+  /// indeterminate `CircularProgressIndicator` is on screen -- it keeps
+  /// scheduling new frames for its own rotation forever, regardless of
+  /// whether the underlying save has actually finished, so pumpAndSettle
+  /// has no way to distinguish "still saving" from "decorative animation
+  /// still spinning." A fixed number of pumps sidesteps that: it advances
+  /// the real work (repository save, stream-subscription teardown, the
+  /// state transition back to idle, and the pop) without depending on
+  /// hasScheduledFrame ever going false while a spinner is in the tree.
+  Future<void> pumpThroughSave(WidgetTester tester) async {
+    // runAsync, not more fake-clock pump() calls -- something in the save
+    // path (suspected: cancelling the StreamSubscription to the fake
+    // service's broadcast stream) needs real async/event-loop time to
+    // resolve that fake-clock pumping alone never provides, no matter how
+    // many iterations. runAsync briefly steps outside the fake-clock zone
+    // to let real Futures/Timers actually complete. pumpAndSettle afterward
+    // is safe here (unlike right after tapping Save) because the only
+    // thing left to settle is the route's own bounded pop transition, not
+    // an indeterminate spinner.
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+    await tester.pumpAndSettle();
+  }
+
   /// Drives a real [ScannerController] to the `detected` phase (via a
   /// scripted frame, same as the app would) and pumps [PreviewScreen] on
   /// top of a base route, so Save/Rescan navigation behaves like it does
@@ -43,8 +67,14 @@ void main() {
     service.emit([
       BarcodeDetection(value: value, format: format, boundingBoxArea: 100, boundingBox: const BarcodeBoundingBox.fullFrame()),
     ]);
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero); // let the duplicate lookup resolve
+    // tester.pump(), not a bare Future.delayed -- testWidgets() runs inside
+    // TestWidgetsFlutterBinding's controlled-clock zone, where a bare
+    // Future.delayed (even Duration.zero) never gets its timer processed
+    // without an explicit pump to drive it, and just hangs until the test's
+    // outer timeout aborts it. This was previously hanging every single
+    // test in this file for the full 10-minute pumpAndSettle ceiling.
+    await tester.pump();
+    await tester.pump(); // let the duplicate lookup resolve
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -143,7 +173,7 @@ void main() {
 
     await tester.enterText(find.byKey(const ValueKey('preview_label_field')), 'Pantry');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pumpAndSettle();
+    await pumpThroughSave(tester);
 
     expect(repository.entries, hasLength(1));
     expect(repository.entries.single.value, '0123456789012');
@@ -156,7 +186,7 @@ void main() {
     await pumpDetected(tester);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pumpAndSettle();
+    await pumpThroughSave(tester);
 
     expect(repository.entries.single.label, isNull);
   });
@@ -166,7 +196,7 @@ void main() {
     repository.throwOnSave = true;
 
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pumpAndSettle();
+    await pumpThroughSave(tester);
 
     expect(find.text("Couldn't save. Please try again."), findsOneWidget);
     expect(find.byType(PreviewScreen), findsOneWidget);
@@ -174,7 +204,7 @@ void main() {
 
     repository.throwOnSave = false;
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pumpAndSettle();
+    await pumpThroughSave(tester);
 
     expect(repository.entries, hasLength(1));
     expect(find.byType(PreviewScreen), findsNothing);

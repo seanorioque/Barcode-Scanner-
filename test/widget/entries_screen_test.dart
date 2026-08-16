@@ -60,7 +60,12 @@ void main() {
     );
 
     await tester.drag(find.text('AAA111'), const Offset(-500, 0));
-    await tester.pump();
+    // pumpAndSettle, not a single pump -- confirmDismiss's async dialog
+    // show needs more than one frame to actually land in the tree (the
+    // dismiss gesture's own resolution, the confirmDismiss microtask chain,
+    // and the dialog's entrance transition), same idiom already used
+    // elsewhere in this file for revealing dialogs.
+    await tester.pumpAndSettle();
 
     expect(find.text('Delete this scan?'), findsOneWidget);
     expect(find.text('AAA111'), findsWidgets); // still present, not yet deleted
@@ -88,7 +93,12 @@ void main() {
     );
 
     await tester.drag(find.text('AAA111'), const Offset(-500, 0));
-    await tester.pump();
+    // pumpAndSettle, not a single pump -- confirmDismiss's async dialog
+    // show needs more than one frame to actually land in the tree (the
+    // dismiss gesture's own resolution, the confirmDismiss microtask chain,
+    // and the dialog's entrance transition), same idiom already used
+    // elsewhere in this file for revealing dialogs.
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
 
@@ -239,7 +249,12 @@ void main() {
     repository.throwOnSoftDelete = true;
 
     await tester.drag(find.text('AAA111'), const Offset(-500, 0));
-    await tester.pump();
+    // pumpAndSettle, not a single pump -- confirmDismiss's async dialog
+    // show needs more than one frame to actually land in the tree (the
+    // dismiss gesture's own resolution, the confirmDismiss microtask chain,
+    // and the dialog's entrance transition), same idiom already used
+    // elsewhere in this file for revealing dialogs.
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
 
@@ -390,7 +405,12 @@ void main() {
     );
 
     await tester.drag(find.text('AAA111'), const Offset(-500, 0));
-    await tester.pump();
+    // pumpAndSettle, not a single pump -- confirmDismiss's async dialog
+    // show needs more than one frame to actually land in the tree (the
+    // dismiss gesture's own resolution, the confirmDismiss microtask chain,
+    // and the dialog's entrance transition), same idiom already used
+    // elsewhere in this file for revealing dialogs.
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
     await tester.pumpAndSettle();
 

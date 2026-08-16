@@ -55,6 +55,17 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
   Future<void> _save() async {
     await ref.read(scannerControllerProvider.notifier).save(label: _labelController.text);
     if (!mounted) return;
+    // save() catches its own repository-write failures internally (so it
+    // can surface them as ScannerState.saveError rather than throwing) --
+    // it never rethrows here. Without this check, a failed save still
+    // popped back to the entries list, silently discarding the scan the
+    // user thought they'd just saved. Checking `phase` rather than
+    // `saveError` specifically: the saveError-listening SnackBar callback
+    // clears saveError synchronously as part of the same state change that
+    // triggers it, so by the time this line runs saveError may already be
+    // back to null even on failure -- `phase` only reaches `idle` on an
+    // actual successful save (it's `detected` again on failure).
+    if (ref.read(scannerControllerProvider).phase != ScanPhase.idle) return;
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
@@ -68,8 +79,14 @@ class _PreviewScreenState extends ConsumerState<PreviewScreen> {
     final detection = state.detection;
 
     if (detection == null) {
-      // Reached without an active detection (e.g. deep navigation); bail out.
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      // Reached without an active detection (e.g. deep navigation) -- there's
+      // nothing to show here, so leave immediately rather than stranding the
+      // user (or a test's pumpAndSettle) on a permanently-indeterminate
+      // spinner with no way out. Can't pop synchronously during build.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).maybePop();
+      });
+      return const SizedBox.shrink();
     }
 
     final saving = state.phase == ScanPhase.saving;
