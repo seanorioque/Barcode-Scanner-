@@ -8,6 +8,35 @@ An offline Flutter app for scanning 1D barcodes and QR codes with Google ML Kit 
 [2D](https://drive.google.com/file/d/1wkrNl482iIpE-iI77w0H0fViYb4SHlXZ/view?usp=sharing)
 — Captured entries → Capture → detect → Preview & confirm → Save.
 
+## Exercise requirements
+
+A direct mapping to the brief, for quick verification.
+
+**Captured entries**
+- ✅ List of previously scanned barcodes/QR codes — `EntriesScreen`, most recent first
+- ✅ Stored locally on the device — SQLite via `sqflite` (`SqliteScanRepository`), fully offline
+- ✅ Each entry shows the scanned value and date/time — monospace value + relative timestamp (tap to reveal the absolute date/time)
+- ✅ Start a new scan from this screen — FAB, present including on the empty state
+
+**Capture**
+- ✅ Opens the phone camera — `camera` package, live preview
+- ✅ Google ML Kit recognizes common 1D barcodes and QR codes — EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, Codabar, ITF, and QR (see [Supported formats](#supported-formats))
+- ✅ Clear indication when a code is detected — haptic pulse, the scan guide's border turns green, and a ~300ms pause before advancing to Preview so the confirmation is actually seen
+
+**Preview & confirm**
+- ✅ Shows the detected value and format/type — selectable monospace value block + a labelled format chip
+- ✅ Rescan if needed — one tap, no confirmation dialog, nothing was persisted yet so there's nothing to discard
+- ✅ Save the entry — one tap
+- ✅ Optional name/label — a text field that doesn't autofocus (keeps Save one tap away), blank is fine
+
+**Deliverables**
+- ✅ GitHub repository with source + a README with run/build instructions — this repo
+- ✅ Android APK, installable and testable — attached to the [v1.0.0 release](https://github.com/seanorioque/Barcode-Scanner-/releases/tag/v1.0.0)
+- ✅ Short screen recording of the main flow — see [Demo](#demo) above
+- ✅ Technical decisions, libraries used, what I learned, what I'd improve — see the matching sections near the bottom of this README
+
+Reasonable decisions made where the brief/mockup didn't specify are called out inline throughout, and the full list (with dates and root causes for anything that was a bug rather than a choice) lives in [`prompt/requirements.md`](prompt/requirements.md)'s ambiguity/bug log.
+
 ## What it does
 
 Point the camera at a barcode, confirm the value and an optional label, and it's saved locally with a cropped photo of the code. Scanning the same value again doesn't create a duplicate — it surfaces the existing entry instead. Entries can be edited, searched, deleted (with a 5-second Undo and a Recently Deleted trash), or entered manually without a camera.
