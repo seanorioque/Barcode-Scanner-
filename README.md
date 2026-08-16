@@ -155,3 +155,45 @@ The interfaces in `lib/domain/` are the seam that makes the UI testable without 
 ## More
 
 `prompt/` holds the real documentation: `requirements.md` (numbered functional requirements with acceptance criteria and an ambiguity/bug log), `plan.md` (the original brief), and per-phase execution logs recording what broke, why, and how it was root-caused. Read it before making non-trivial changes — several current constraints are deliberate decisions rather than oversights.
+
+---
+
+## Technical decisions
+
+- **`camera` + `google_mlkit_barcode_scanning` over `mobile_scanner`.** `mobile_scanner` is far less code, but recent versions use ML Kit on Android and Apple's own Vision framework on iOS. The brief calls for Google ML Kit specifically, so this route keeps that true on both platforms and gives direct control over frame throttling, resolution, and rotation — at the cost of owning the `CameraImage → InputImage` conversion by hand (YUV420 on Android, BGRA8888 on iOS), which is the highest-risk code in the app (`lib/data/mlkit_barcode_scanner_service.dart`).
+- **`sqflite` over Hive.** Hive is a simpler API with no schema, but `sqflite_common_ffi` gives the test suite a real in-memory SQLite engine, so repository tests run actual SQL — including a partial unique index (`... WHERE deleted_at IS NULL`) — instead of asserting against a mock.
+- **The scanned `value` is the app's unique identifier.** Once duplicate-blocking became a requirement, `value` needed to be immutable and uniquely constrained among active rows, enforced at the DB level (not just in the UI), so a second scan of the same code can't slip through a race or a bypassed check.
+- **Riverpod with an explicit state machine** (`idle → scanning → resolving → detected → saving`) rather than ad hoc booleans. The `resolving` phase exists specifically to stop a second camera frame from starting a concurrent duplicate-lookup while the first one is still in flight — a real bug class with repeated detection callbacks during a screen transition.
+- **1D-only detection, QR intentionally out of scope.** The brief asks for 1D + QR; this app currently detects 1D formats only (EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, Codabar, ITF). I'm flagging this plainly rather than glossing over it: it's a real deviation from the stated requirement, not something the mockup left open. The reasoning — the scan guide, the FAB icon, and the empty-state copy were all shaped around "line up a barcode," which doesn't fit QR's square aspect, and a narrower format list measurably improves ML Kit's detection latency and false-positive rate on noisy frames. In hindsight I'd resolve this the other way: add `BarcodeFormat.qrCode` back to the detector (it's a one-line change in `mlkit_barcode_scanner_service.dart`) and either accept a guide shape that isn't perfectly tuned for either code type, or swap the guide to a square when a QR-capable mode is active. I chose to document the trade-off honestly here instead of quietly re-scoping the brief.
+- **Photo cropping uses resolution-independent fractional coordinates.** ML Kit's analysis frame and the full-resolution still photo are different sizes, so the detected bounding box is stored as a fraction (0.0–1.0) of the upright frame, then re-applied to whatever resolution the still photo turns out to be (`lib/domain/barcode_crop.dart`).
+
+## Libraries used
+
+| Package | Why |
+|---|---|
+| `camera` | Live preview + frame stream + still capture |
+| `google_mlkit_barcode_scanning` | The actual barcode detection, per the brief |
+| `flutter_riverpod` | State management — `StreamProvider` for the live entry list, a `Notifier` for the scan state machine |
+| `sqflite` / `sqflite_common_ffi` | Local persistence; the FFI variant runs real SQLite in tests |
+| `image` | Decoding, EXIF-orientation baking, and cropping the captured JPEG |
+| `path_provider` / `path` | Locating and building paths into app-private storage for the DB and photos |
+| `permission_handler` | Camera permission request/status, including the "permanently denied → system settings" path |
+| `uuid` | Entry IDs |
+
+## What I learned
+
+This was my first time working with Flutter and Google ML Kit, so most of the learning was hands-on:
+
+- **Camera frame formats aren't uniform across platforms.** Android delivers YUV420 planes that need concatenating into an NV21-compatible buffer; iOS delivers BGRA8888 directly. Both need a rotation value derived from the sensor orientation, not just the frame dimensions.
+- **A frame's "upright" dimensions depend on rotation in a specific way** — only 90°/270° sensor rotations swap width/height; 180° doesn't. This app actually shipped a bug where that condition got flipped to 180°/270° at some point, silently scrambling every cropped photo. It's now a table-tested pure function (`lib/domain/barcode_crop.dart`) specifically so that class of bug can't come back unnoticed.
+- **Riverpod has real rules about where you can read provider state.** Reading a notifier's own `state` from inside its `ref.onDispose` callback throws — "Cannot use Ref inside life-cycles" — because Ref access is guarded during lifecycle callbacks. The fix was mirroring the two fields cleanup needed into plain instance fields kept in sync on every state write, rather than reading through `state` at dispose time.
+- **`flutter_test`'s `pumpAndSettle()` needs a genuinely settling widget tree.** A conditionally-enabled button whose `onPressed` was captured from a build *before* a text field's `setState` fires will silently no-op on tap unless you `pump()` in between — the tap still "succeeds" against the stale widget, it just doesn't do anything.
+- **SQLite's partial unique indexes** (`CREATE UNIQUE INDEX ... WHERE deleted_at IS NULL`) are a clean way to express "unique among active rows only," which is exactly what duplicate-blocking-with-soft-delete needed.
+
+## What I'd improve with more time
+
+- **Add QR back**, per the discussion above — this is the highest-priority gap against the original brief.
+- **iOS has never actually been built.** The deployment target and `Podfile` are set correctly against the real ML Kit pod requirements, but this was developed on a Windows machine with no Xcode/macOS access, so `pod install` and a real device build have never been run.
+- **CSV/data export** — raised as a candidate but deliberately not built this pass; the repository interface would need one more method.
+- **Pagination for the entries list** — currently loads every active row and filters client-side, which is fine at hundreds of entries but wouldn't scale cleanly to very large datasets. Not worth the complexity without evidence that volume is real.
+- **Android release signing** — the release build currently reuses the debug signing config, and the bundle ID is still the `com.example.*` placeholder; both need to change before any real store submission.
