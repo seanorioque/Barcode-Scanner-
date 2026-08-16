@@ -2,6 +2,10 @@
 
 An offline Flutter app for scanning 1D barcodes with Google ML Kit and keeping a local, searchable record of them. Android and iOS only — no network calls, no account, no sync.
 
+## Demo
+
+[Screen recording of the main flow](https://drive.google.com/file/d/1pPjIBn1EW5Uw5OekcpW-5MfJJe4Zhxjj/view?usp=sharing) — Captured entries → Capture → detect → Preview & confirm → Save.
+
 ## What it does
 
 Point the camera at a barcode, confirm the value and an optional label, and it's saved locally with a cropped photo of the code. Scanning the same value again doesn't create a duplicate — it surfaces the existing entry instead. Entries can be edited, searched, deleted (with a 5-second Undo and a Recently Deleted trash), or entered manually without a camera.
