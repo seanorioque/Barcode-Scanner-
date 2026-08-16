@@ -4,7 +4,9 @@ An offline Flutter app for scanning 1D barcodes and QR codes with Google ML Kit 
 
 ## Demo
 
-[Screen recording of the main flow](https://drive.google.com/file/d/1pPjIBn1EW5Uw5OekcpW-5MfJJe4Zhxjj/view?usp=sharing) — Captured entries → Capture → detect → Preview & confirm → Save.
+[1D](https://drive.google.com/file/d/1pPjIBn1EW5Uw5OekcpW-5MfJJe4Zhxjj/view?usp=sharing) 
+[2D](https://drive.google.com/file/d/1wkrNl482iIpE-iI77w0H0fViYb4SHlXZ/view?usp=sharing)
+— Captured entries → Capture → detect → Preview & confirm → Save.
 
 ## What it does
 
