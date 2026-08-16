@@ -17,8 +17,10 @@ import '../domain/barcode_scanner_service.dart';
 /// each side when cropping, so the quiet zone / edges aren't clipped.
 const _cropPadding = 0.25;
 
-/// Formats the detector accepts. 1D only — narrowing the list (rather than
-/// "all formats") also measurably improves latency and reduces misreads.
+/// Formats the detector accepts: the common 1D formats plus QR. Still an
+/// explicit list rather than "all formats" — narrowing it measurably
+/// improves latency and reduces misreads on noisy frames, it just isn't
+/// narrowed all the way down to 1D-only anymore.
 const _supportedFormats = [
   BarcodeFormat.ean13,
   BarcodeFormat.ean8,
@@ -29,6 +31,7 @@ const _supportedFormats = [
   BarcodeFormat.code93,
   BarcodeFormat.codabar,
   BarcodeFormat.itf,
+  BarcodeFormat.qrCode,
 ];
 
 /// [BarcodeScannerService] backed by `camera` + Google ML Kit. Owns the

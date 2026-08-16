@@ -1,6 +1,6 @@
 # Barcode Capture
 
-An offline Flutter app for scanning 1D barcodes with Google ML Kit and keeping a local, searchable record of them. Android and iOS only — no network calls, no account, no sync.
+An offline Flutter app for scanning 1D barcodes and QR codes with Google ML Kit and keeping a local, searchable record of them. Android and iOS only — no network calls, no account, no sync.
 
 ## Demo
 
@@ -13,14 +13,14 @@ Point the camera at a barcode, confirm the value and an optional label, and it's
 ## Screens
 
 - **Captured entries** — the list of everything scanned, most recent first, with search, multi-select delete, and tap-to-edit labels.
-- **Capture** — live camera preview with a 1D scan guide, torch toggle, and permission handling.
+- **Capture** — live camera preview with a scan guide, torch toggle, and permission handling.
 - **Preview & confirm** — shows the detected value, format, and cropped photo; Save, Rescan, or (for a duplicate) Done.
 - **Recently Deleted** — soft-deleted entries, restorable until a 30-day retention period purges them.
 - **Add manually** — type in a barcode value/format/label without scanning.
 
 ## Supported formats
 
-1D only: EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, Codabar, ITF. QR/2D codes are intentionally out of scope (see `prompt/requirements.md` ambiguity #9).
+1D: EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, Codabar, ITF. Plus QR codes. Other 2D formats (Data Matrix, Aztec, PDF417, ...) are out of scope — the brief asked for 1D + QR specifically.
 
 ---
 
@@ -150,7 +150,7 @@ The interfaces in `lib/domain/` are the seam that makes the UI testable without 
 
 **Build fails on `:app:compileDebugJavaWithJavac`** — almost certainly the `compileSdk`/`permission_handler` interaction described above. Check whether something bumped either one.
 
-**Barcode won't scan** — printed codes work far better than codes displayed on another screen, where glare and pixel moiré defeat the line scan. Also confirm the format is in the supported 1D list; QR codes are deliberately ignored.
+**Barcode won't scan** — printed codes work far better than codes displayed on another screen, where glare and pixel moiré defeat the line scan. Also confirm the format is in the supported list — 1D + QR, not other 2D formats like Data Matrix or PDF417.
 
 **`flutter test` fails on database tests** — make sure `flutter pub get` has pulled `sqflite_common_ffi`; the tests need it to run SQLite on the host.
 
@@ -168,7 +168,7 @@ The interfaces in `lib/domain/` are the seam that makes the UI testable without 
 - **`sqflite` over Hive.** Hive is a simpler API with no schema, but `sqflite_common_ffi` gives the test suite a real in-memory SQLite engine, so repository tests run actual SQL — including a partial unique index (`... WHERE deleted_at IS NULL`) — instead of asserting against a mock.
 - **The scanned `value` is the app's unique identifier.** Once duplicate-blocking became a requirement, `value` needed to be immutable and uniquely constrained among active rows, enforced at the DB level (not just in the UI), so a second scan of the same code can't slip through a race or a bypassed check.
 - **Riverpod with an explicit state machine** (`idle → scanning → resolving → detected → saving`) rather than ad hoc booleans. The `resolving` phase exists specifically to stop a second camera frame from starting a concurrent duplicate-lookup while the first one is still in flight — a real bug class with repeated detection callbacks during a screen transition.
-- **1D-only detection, QR intentionally out of scope.** The brief asks for 1D + QR; this app currently detects 1D formats only (EAN-13, EAN-8, UPC-A, UPC-E, Code 128, Code 39, Code 93, Codabar, ITF). I'm flagging this plainly rather than glossing over it: it's a real deviation from the stated requirement, not something the mockup left open. The reasoning — the scan guide, the FAB icon, and the empty-state copy were all shaped around "line up a barcode," which doesn't fit QR's square aspect, and a narrower format list measurably improves ML Kit's detection latency and false-positive rate on noisy frames. In hindsight I'd resolve this the other way: add `BarcodeFormat.qrCode` back to the detector (it's a one-line change in `mlkit_barcode_scanner_service.dart`) and either accept a guide shape that isn't perfectly tuned for either code type, or swap the guide to a square when a QR-capable mode is active. I chose to document the trade-off honestly here instead of quietly re-scoping the brief.
+- **1D + QR, not general 2D.** An earlier pass narrowed the detector to 1D-only, which was a real deviation from the brief's stated "1D + QR" requirement rather than something the mockup left open — see `prompt/requirements.md`'s bug log for the full account. `BarcodeFormat.qrCode` is now back in the detector, and the scan guide changed from a wide 1D-shaped rectangle to a square, since a square correctly frames a QR code while still comfortably fitting a horizontal 1D barcode. Other 2D formats (Data Matrix, Aztec, PDF417) stay out of scope — the brief only asked for QR.
 - **Photo cropping uses resolution-independent fractional coordinates.** ML Kit's analysis frame and the full-resolution still photo are different sizes, so the detected bounding box is stored as a fraction (0.0–1.0) of the upright frame, then re-applied to whatever resolution the still photo turns out to be (`lib/domain/barcode_crop.dart`).
 
 ## Libraries used
@@ -196,7 +196,6 @@ This was my first time working with Flutter and Google ML Kit, so most of the le
 
 ## What I'd improve with more time
 
-- **Add QR back**, per the discussion above — this is the highest-priority gap against the original brief.
 - **iOS has never actually been built.** The deployment target and `Podfile` are set correctly against the real ML Kit pod requirements, but this was developed on a Windows machine with no Xcode/macOS access, so `pod install` and a real device build have never been run.
 - **CSV/data export** — raised as a candidate but deliberately not built this pass; the repository interface would need one more method.
 - **Pagination for the entries list** — currently loads every active row and filters client-side, which is fine at hundreds of entries but wouldn't scale cleanly to very large datasets. Not worth the complexity without evidence that volume is real.

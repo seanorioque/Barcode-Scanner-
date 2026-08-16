@@ -1,4 +1,4 @@
-/// 1D barcode formats the app supports, for the manual-entry format picker.
+/// Barcode formats the app supports, for the manual-entry format picker.
 /// Kept as plain strings (rather than importing ML Kit's enum here) so the
 /// domain/UI layers stay free of the ML Kit dependency. Mirrors
 /// `MlKitBarcodeScannerService._supportedFormats` — update both together.
@@ -12,4 +12,5 @@ const supportedBarcodeFormats = [
   'CODE_93',
   'CODABAR',
   'ITF',
+  'QR_CODE',
 ];

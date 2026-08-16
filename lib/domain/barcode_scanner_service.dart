@@ -1,4 +1,4 @@
-/// A single 1D barcode found in one analyzed camera frame.
+/// A single barcode (1D or QR) found in one analyzed camera frame.
 class BarcodeDetection {
   const BarcodeDetection({
     required this.value,

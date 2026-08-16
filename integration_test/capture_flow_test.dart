@@ -32,7 +32,7 @@ void main() {
 
     expect(find.text('No scans yet'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.barcode_reader));
+    await tester.tap(find.byIcon(Icons.qr_code_scanner));
     await tester.pumpAndSettle();
 
     // Stands in for a real camera frame containing a decoded barcode.
@@ -75,7 +75,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byIcon(Icons.barcode_reader));
+    await tester.tap(find.byIcon(Icons.qr_code_scanner));
     await tester.pumpAndSettle();
 
     service.emit(const [

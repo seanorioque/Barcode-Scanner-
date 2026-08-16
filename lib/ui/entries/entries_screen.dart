@@ -329,7 +329,7 @@ class _EntriesScreenState extends ConsumerState<EntriesScreen> {
           : FloatingActionButton(
               onPressed: _openCapture,
               tooltip: 'Scan a barcode',
-              child: const Icon(Icons.barcode_reader),
+              child: const Icon(Icons.qr_code_scanner),
             ),
       body: entriesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -487,7 +487,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.barcode_reader, size: 96, color: Theme.of(context).colorScheme.outline),
+            Icon(Icons.qr_code_scanner, size: 96, color: Theme.of(context).colorScheme.outline),
             const SizedBox(height: 16),
             Text(
               'No scans yet',
@@ -502,7 +502,7 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: onScanPressed,
-              icon: const Icon(Icons.barcode_reader),
+              icon: const Icon(Icons.qr_code_scanner),
               label: const Text('Scan your first barcode'),
             ),
           ],

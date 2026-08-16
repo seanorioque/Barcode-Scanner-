@@ -171,15 +171,15 @@ class _ScanOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // A wide horizontal rectangle, not a square — this app scans 1D
-    // barcodes, not QR/2D codes, so the guide should read as "line up the
-    // barcode" rather than "line up a square code".
-    final cutoutWidth = size.width * 0.85;
-    final cutoutHeight = (cutoutWidth / 3.0).clamp(60.0, size.height * 0.35);
+    // A square guide -- this app scans both 1D barcodes and QR codes, and a
+    // square frames a QR code correctly while still comfortably fitting a
+    // horizontal 1D barcode inside it. Purely a visual guide: actual
+    // detection runs on the full camera frame regardless of this shape.
+    final cutoutSize = (size.width * 0.7).clamp(60.0, size.height * 0.5);
     final cutoutRect = Rect.fromCenter(
       center: Offset(size.width / 2, size.height / 2),
-      width: cutoutWidth,
-      height: cutoutHeight,
+      width: cutoutSize,
+      height: cutoutSize,
     );
     final cutoutRRect = RRect.fromRectAndRadius(cutoutRect, const Radius.circular(16));
 
